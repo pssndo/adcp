@@ -322,7 +322,8 @@
                   "docs/creative/channels/display",
                   "docs/creative/channels/audio",
                   "docs/creative/channels/dooh",
-                  "docs/creative/channels/carousels"
+                  "docs/creative/channels/carousels",
+                  "docs/creative/channels/email"
                 ]
               },
               {
@@ -341,7 +342,8 @@
             "group": "Industry Guides",
             "pages": [
               "docs/guides/index",
-              "docs/guides/commerce-media"
+              "docs/guides/commerce-media",
+              "docs/guides/newsletter-advertising"
             ]
           },
           {
@@ -825,7 +827,8 @@
                   "docs/creative/channels/display",
                   "docs/creative/channels/audio",
                   "docs/creative/channels/dooh",
-                  "docs/creative/channels/carousels"
+                  "docs/creative/channels/carousels",
+                  "docs/creative/channels/email"
                 ]
               },
               {
@@ -844,7 +847,8 @@
             "group": "Industry Guides",
             "pages": [
               "docs/guides/index",
-              "docs/guides/commerce-media"
+              "docs/guides/commerce-media",
+              "docs/guides/newsletter-advertising"
             ]
           },
           {

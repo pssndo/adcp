@@ -1,0 +1,376 @@
+---
+title: Email (Newsletter)
+---
+
+
+This guide covers how AdCP represents email advertising formats for newsletter sponsorships, display banners in email, and dedicated sponsored sends.
+
+## Email Format Characteristics
+
+Email formats differ from other digital formats:
+- No JavaScript execution in any email client
+- Inline CSS only (no external stylesheets, limited media query support)
+- Images often loaded through proxy servers (Gmail, Apple Mail)
+- No video playback (animated GIFs are the only motion format)
+- Click tracking via server-side redirects, not client-side events
+- Impression tracking via creative image request (affected by Apple Mail Privacy Protection)
+- Must render across dozens of email clients with varying HTML/CSS support
+
+## Native Email Formats
+
+### Standard Native Ad
+
+The most common newsletter ad format. The publisher renders the ad within their template using buyer-provided text and image assets.
+
+```json
+{
+  "format_id": {
+    "agent_url": "https://ads.publisher.com",
+    "id": "native_email_standard"
+  },
+  "type": "email",
+  "assets": [
+    {
+      "asset_id": "headline",
+      "asset_type": "text",
+      "asset_role": "headline",
+      "required": true,
+      "requirements": {
+        "max_length": 60
+      }
+    },
+    {
+      "asset_id": "body",
+      "asset_type": "text",
+      "asset_role": "body",
+      "required": true,
+      "requirements": {
+        "max_length": 150
+      }
+    },
+    {
+      "asset_id": "cta",
+      "asset_type": "text",
+      "asset_role": "cta",
+      "required": true,
+      "requirements": {
+        "max_length": 25
+      }
+    },
+    {
+      "asset_id": "image",
+      "asset_type": "image",
+      "asset_role": "hero_image",
+      "required": true,
+      "requirements": {
+        "width": 600,
+        "height": 300,
+        "file_types": ["jpg", "png"],
+        "max_file_size_kb": 200
+      }
+    },
+    {
+      "asset_id": "click_url",
+      "asset_type": "url",
+      "url_type": "clickthrough",
+      "required": true
+    },
+    {
+      "asset_id": "impression_tracker",
+      "asset_type": "url",
+      "url_type": "tracker",
+      "required": true
+    }
+  ]
+}
+```
+
+### Compact Native Ad
+
+A smaller native format for mid-content or footer positions — no image, text only.
+
+```json
+{
+  "format_id": {
+    "agent_url": "https://ads.publisher.com",
+    "id": "native_email_compact"
+  },
+  "type": "email",
+  "assets": [
+    {
+      "asset_id": "headline",
+      "asset_type": "text",
+      "asset_role": "headline",
+      "required": true,
+      "requirements": {
+        "max_length": 50
+      }
+    },
+    {
+      "asset_id": "body",
+      "asset_type": "text",
+      "asset_role": "body",
+      "required": true,
+      "requirements": {
+        "max_length": 120
+      }
+    },
+    {
+      "asset_id": "cta",
+      "asset_type": "text",
+      "asset_role": "cta",
+      "required": false,
+      "requirements": {
+        "max_length": 20
+      }
+    },
+    {
+      "asset_id": "click_url",
+      "asset_type": "url",
+      "url_type": "clickthrough",
+      "required": true
+    },
+    {
+      "asset_id": "impression_tracker",
+      "asset_type": "url",
+      "url_type": "tracker",
+      "required": true
+    }
+  ]
+}
+```
+
+## Display Email Formats
+
+### Email Banner (600px width)
+
+Standard email-width banner. The 600px width is the de facto standard for email layouts.
+
+```json
+{
+  "format_id": {
+    "agent_url": "https://creative.adcontextprotocol.org",
+    "id": "display_600x200"
+  },
+  "type": "email",
+  "assets": [
+    {
+      "asset_id": "banner_image",
+      "asset_type": "image",
+      "asset_role": "hero_image",
+      "required": true,
+      "requirements": {
+        "width": 600,
+        "height": 200,
+        "file_types": ["jpg", "png", "gif"],
+        "max_file_size_kb": 100
+      }
+    },
+    {
+      "asset_id": "click_url",
+      "asset_type": "url",
+      "url_type": "clickthrough",
+      "required": true
+    },
+    {
+      "asset_id": "impression_tracker",
+      "asset_type": "url",
+      "url_type": "tracker",
+      "required": true
+    }
+  ]
+}
+```
+
+### Email Leaderboard (600x100)
+
+A slimmer banner format for header or footer positions.
+
+```json
+{
+  "format_id": {
+    "agent_url": "https://creative.adcontextprotocol.org",
+    "id": "display_600x100"
+  },
+  "type": "email",
+  "assets": [
+    {
+      "asset_id": "banner_image",
+      "asset_type": "image",
+      "asset_role": "hero_image",
+      "required": true,
+      "requirements": {
+        "width": 600,
+        "height": 100,
+        "file_types": ["jpg", "png", "gif"],
+        "max_file_size_kb": 50
+      }
+    },
+    {
+      "asset_id": "click_url",
+      "asset_type": "url",
+      "url_type": "clickthrough",
+      "required": true
+    },
+    {
+      "asset_id": "impression_tracker",
+      "asset_type": "url",
+      "url_type": "tracker",
+      "required": true
+    }
+  ]
+}
+```
+
+## Impression Tracking for Email
+
+Email impressions are tracked by serving creative images through a tracking URL. When a subscriber opens the email and their client requests the ad image, the server logs the impression and serves the image in a single round-trip. There is no separate 1x1 tracking pixel — the creative image itself is the tracking event.
+
+This approach is more reliable than traditional 1x1 pixels because it piggybacks on the image the subscriber already sees, avoiding an extra network request and eliminating the common failure mode where a tracking pixel loads but the actual creative does not (or vice versa).
+
+Click tracking uses server-side redirect URLs. The publisher wraps the advertiser's destination URL in a tracking redirect that logs the click before forwarding the user.
+
+### Image Pre-Fetching and Proxy Behavior
+
+Several email clients request images before the subscriber actually opens the email. Since the creative image is the tracking event, sellers must account for this to avoid inflated impression counts.
+
+**Apple Mail Privacy Protection (MPP)** pre-fetches all remote content — including ad images — at email delivery time, regardless of whether the subscriber ever opens the email. This means an image request from Apple Mail does not reliably indicate a real open. Sellers should:
+- Identify Apple MPP requests by user-agent or IP range
+- Exclude or flag these as proxy-initiated in impression counting
+- Report Apple Mail impressions separately in `ext.newsletter.by_email_client` so buyers can assess the impact
+
+**Gmail Image Proxy** caches all images through Google's servers on first open. Subsequent opens by the same subscriber are served from cache and generate no new request to the ad server. This means:
+- Only the first open is reliably tracked per subscriber per image URL
+- Subscriber IP address and geolocation are not available (requests come from Google IPs)
+- Cache-busting via unique query parameters per subscriber can mitigate the deduplication issue
+
+**Other clients** — Yahoo Mail and some corporate email gateways also proxy or pre-fetch images with varying behavior. Some corporate environments block external images entirely, producing zero impressions regardless of opens.
+
+Sellers should document their pre-fetch filtering methodology in `delivery_measurement.notes` on products so buyers understand how reported impressions are counted.
+
+## Creative Manifests
+
+### Native Email Manifest
+
+```json
+{
+  "format_id": {
+    "agent_url": "https://ads.publisher.com",
+    "id": "native_email_standard"
+  },
+  "assets": {
+    "headline": {
+      "asset_type": "text",
+      "text": "Ship 10x Faster with Acme Cloud"
+    },
+    "body": {
+      "asset_type": "text",
+      "text": "Deploy to production in seconds. Auto-scaling infrastructure that grows with your team."
+    },
+    "cta": {
+      "asset_type": "text",
+      "text": "Start Free Trial"
+    },
+    "image": {
+      "asset_type": "image",
+      "url": "https://cdn.acmecloud.com/newsletter/hero.png",
+      "width": 600,
+      "height": 300
+    },
+    "click_url": {
+      "asset_type": "url",
+      "url_type": "clickthrough",
+      "url": "https://acmecloud.com/start?utm_source=newsletter&utm_medium=email"
+    },
+    "impression_tracker": {
+      "asset_type": "url",
+      "url_type": "tracker",
+      "url": "https://track.acmecloud.com/imp?buy={MEDIA_BUY_ID}&pkg={PACKAGE_ID}"
+    }
+  }
+}
+```
+
+### Display Email Manifest
+
+```json
+{
+  "format_id": {
+    "agent_url": "https://creative.adcontextprotocol.org",
+    "id": "display_600x200"
+  },
+  "assets": {
+    "banner_image": {
+      "asset_type": "image",
+      "url": "https://cdn.acmecloud.com/newsletter/banner_600x200.png",
+      "width": 600,
+      "height": 200
+    },
+    "click_url": {
+      "asset_type": "url",
+      "url_type": "clickthrough",
+      "url": "https://acmecloud.com/promo?utm_source=finweekly&utm_medium=email"
+    },
+    "impression_tracker": {
+      "asset_type": "url",
+      "url_type": "tracker",
+      "url": "https://track.acmecloud.com/imp?buy={MEDIA_BUY_ID}&pkg={PACKAGE_ID}"
+    }
+  }
+}
+```
+
+## Email-Specific Macros
+
+In addition to [universal macros](/docs/creative/universal-macros), email formats support:
+
+### Sendout Information
+- `{SENDOUT_ID}` — Unique identifier for the newsletter edition
+- `{SENDOUT_EDITION}` — Human-readable edition label
+- `{SENDOUT_TIMESTAMP}` — When the email was sent (Unix timestamp)
+
+### Subscriber Information
+- `{SUBSCRIBER_HASH}` — Hashed subscriber identifier (privacy-safe)
+- `{EMAIL_CLIENT}` — Detected email client (gmail, outlook, apple_mail, etc.)
+- `{READING_DEVICE}` — Detected device type (mobile, desktop, tablet)
+
+**Example impression tracking URL:**
+```
+https://track.brand.com/imp?
+  buy={MEDIA_BUY_ID}&
+  pkg={PACKAGE_ID}&
+  sendout={SENDOUT_ID}&
+  sub={SUBSCRIBER_HASH}&
+  client={EMAIL_CLIENT}&
+  device={READING_DEVICE}&
+  ts={SENDOUT_TIMESTAMP}
+```
+
+## Dark Mode Considerations
+
+Many email clients support dark mode, which can invert colors and affect creative rendering:
+
+- **Background colors** may be overridden by the email client's dark theme
+- **Transparent PNG images** will show the dark background instead of white
+- **Light text on dark backgrounds** may become unreadable if the client inverts colors
+
+Best practices for dark mode compatible creatives:
+- Use images with opaque backgrounds (not transparent)
+- Avoid images that rely on a specific background color
+- Test with both light and dark rendering
+- Products with `ext.newsletter.dark_mode_support: true` indicate the publisher's template handles dark mode gracefully
+
+## Common Email Dimensions
+
+- **600px width** — Standard email content width (desktop and mobile)
+- **600x200** — Standard email banner
+- **600x100** — Email leaderboard / header banner
+- **300x250** — Sidebar placement (two-column layouts only)
+- **600x300** — Hero image for native ads
+
+## Related Documentation
+
+- [Newsletter Advertising Guide](/docs/guides/newsletter-advertising) — End-to-end workflow for buying newsletter inventory
+- [Universal Macros](/docs/creative/universal-macros) — Complete macro reference including email macros
+- [Creative Manifests](/docs/creative/creative-manifests) — Manifest structure and examples
+- [Asset Types](/docs/creative/asset-types) — URL asset specifications

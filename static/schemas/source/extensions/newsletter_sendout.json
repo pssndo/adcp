@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "/schemas/extensions/newsletter_sendout.json",
+  "title": "Newsletter Sendout",
+  "description": "Represents a single newsletter distribution event. Referenced by the newsletter extension to describe upcoming or past sendouts with their scheduling, volume, and available placements.",
+  "valid_from": "3.0",
+  "type": "object",
+  "properties": {
+    "sendout_id": {
+      "type": "string",
+      "description": "Unique identifier for this sendout"
+    },
+    "scheduled_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Scheduled send time in ISO 8601 format"
+    },
+    "expected_volume": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Expected number of emails to be sent in this sendout"
+    },
+    "edition": {
+      "type": "string",
+      "description": "Human-readable edition label (e.g., 'Vol. 12, Issue 48' or '2026-02-20 Morning')"
+    },
+    "sendout_status": {
+      "$ref": "/schemas/enums/sendout-status.json",
+      "description": "Current lifecycle status of this sendout"
+    },
+    "available_placement_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Placement IDs that still have available inventory in this sendout. Fully sold placements are omitted."
+    },
+    "available_impressions": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of ad impressions available for external booking in this sendout. May be less than expected_volume when the publisher has reserved part of the inventory for internal or direct-sold campaigns. If omitted, all impressions from expected_volume are available."
+    }
+  },
+  "required": ["sendout_id", "scheduled_at"]
+}

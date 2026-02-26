@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "/schemas/enums/subscriber-consent-type.json",
+  "title": "Subscriber Consent Type",
+  "description": "Method by which subscribers were acquired and consented to receive the newsletter",
+  "type": "string",
+  "enum": [
+    "explicit_optin",
+    "double_optin",
+    "implied",
+    "purchased_list"
+  ],
+  "enumDescriptions": {
+    "explicit_optin": "Subscriber actively opted in via a form or checkbox",
+    "double_optin": "Subscriber confirmed via a verification email after initial signup",
+    "implied": "Consent implied through an existing relationship (e.g., customer purchase)",
+    "purchased_list": "Subscriber list was acquired from a third-party provider"
+  }
+}
