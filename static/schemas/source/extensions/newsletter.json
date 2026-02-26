@@ -24,6 +24,12 @@
       "maximum": 1,
       "description": "Average click-through rate as a decimal (e.g., 0.03 for 3%)"
     },
+    "avg_click_to_open_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Average click-to-open rate (CTOR) as a decimal — unique clicks divided by unique opens. More reliable than avg_click_rate when open rates are inflated by Apple Mail Privacy Protection."
+    },
     "send_frequency": {
       "$ref": "/schemas/enums/send-frequency.json",
       "description": "How often the newsletter is sent"

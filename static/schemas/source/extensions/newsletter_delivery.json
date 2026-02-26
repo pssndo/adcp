@@ -28,6 +28,12 @@
       "maximum": 1,
       "description": "Unique open rate as a decimal (unique_opens / emails_sent)"
     },
+    "click_to_open_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Click-to-open rate (CTOR) as a decimal — unique clicks divided by unique opens for this reporting period."
+    },
     "bounce_rate": {
       "type": "number",
       "minimum": 0,
