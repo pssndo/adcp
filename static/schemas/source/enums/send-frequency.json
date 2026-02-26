@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "/schemas/enums/send-frequency.json",
+  "title": "Send Frequency",
+  "description": "Newsletter sending cadence indicating how often a newsletter is distributed to subscribers",
+  "type": "string",
+  "enum": [
+    "daily",
+    "weekly",
+    "biweekly",
+    "monthly",
+    "irregular"
+  ],
+  "enumDescriptions": {
+    "daily": "Sent every day or on most weekdays",
+    "weekly": "Sent once per week on a consistent day",
+    "biweekly": "Sent every two weeks",
+    "monthly": "Sent once per month",
+    "irregular": "No fixed schedule; sent on an as-needed basis"
+  }
+}

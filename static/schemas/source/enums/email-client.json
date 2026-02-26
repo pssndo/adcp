@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "/schemas/enums/email-client.json",
+  "title": "Email Client",
+  "description": "Email client applications used by subscribers to read newsletters",
+  "type": "string",
+  "enum": [
+    "gmail",
+    "outlook",
+    "apple_mail",
+    "yahoo_mail",
+    "thunderbird",
+    "other"
+  ],
+  "enumDescriptions": {
+    "gmail": "Google Gmail (web and mobile app)",
+    "outlook": "Microsoft Outlook (desktop, web, and mobile)",
+    "apple_mail": "Apple Mail on macOS and iOS",
+    "yahoo_mail": "Yahoo Mail (web and mobile app)",
+    "thunderbird": "Mozilla Thunderbird desktop client",
+    "other": "Any other email client not listed above"
+  }
+}

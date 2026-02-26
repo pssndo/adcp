@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "/schemas/extensions/newsletter_placement.json",
+  "title": "Newsletter Placement Extension",
+  "description": "Placement-level extension providing newsletter-specific metadata. Attach as ext.newsletter on placements within email products to describe ad position, rendering constraints, and native ad specifications.",
+  "valid_from": "3.0",
+  "docs_url": "https://docs.adcontextprotocol.org/docs/guides/newsletter-advertising",
+  "type": "object",
+  "properties": {
+    "position": {
+      "$ref": "/schemas/enums/newsletter-placement-position.json",
+      "description": "Position of this placement within the newsletter layout"
+    },
+    "position_index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Zero-based index when multiple placements share the same position type (e.g., 0 for first in_content slot, 1 for second)"
+    },
+    "rendering_constraints": {
+      "type": "object",
+      "properties": {
+        "max_file_size_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum file size for creative assets in bytes"
+        },
+        "supported_mime_types": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "MIME types accepted for creative assets (e.g., 'image/png', 'image/jpeg', 'image/gif')"
+        },
+        "inline_css_only": {
+          "type": "boolean",
+          "description": "Whether the placement requires inline CSS only (no external stylesheets)"
+        },
+        "alt_text_required": {
+          "type": "boolean",
+          "description": "Whether alt text is mandatory for image assets"
+        },
+        "retina_support": {
+          "type": "boolean",
+          "description": "Whether the placement supports 2x retina images"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Technical rendering constraints specific to email clients"
+    },
+    "native_spec": {
+      "type": "object",
+      "properties": {
+        "headline_max_length": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum character length for the headline text"
+        },
+        "body_max_length": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum character length for the body text"
+        },
+        "cta_max_length": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum character length for the call-to-action text"
+        },
+        "has_image": {
+          "type": "boolean",
+          "description": "Whether this native placement includes an image slot"
+        },
+        "layout_id": {
+          "type": "string",
+          "description": "Publisher-specific layout template identifier for native rendering"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Specification for native ad rendering within the newsletter"
+    }
+  },
+  "additionalProperties": false
+}
