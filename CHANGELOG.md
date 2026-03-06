@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.0.0-rc.2
+
+### Minor Changes
+
+- 689adb4: Add generation controls to build_creative and preview_creative: quality tier (draft/production), item_limit for catalog cost control, expires_at on build_creative response for generated asset URL expiration, and storyboard reference asset role.
+- 30c3ad8: Add `time_budget` to `get_products` request and `incomplete` to response.
+
+  - `time_budget` (Duration): buyers declare how long they will commit to a request. Sellers return best-effort results within the budget and do not start processes (human approvals, expensive external queries) that cannot complete in time.
+  - `incomplete` (array): sellers declare what they could not finish — each entry has a `scope` (`products`, `pricing`, `forecast`, `proposals`), a human-readable `description`, and an optional `estimated_wait` duration so the buyer can decide whether to retry.
+  - Adds `seconds` to the Duration `unit` enum.
+
+### Patch Changes
+
+- 7426bd7: Fix Addie spamming users with duplicate outreach messages and missing email auto-link on login.
+
+  Two bugs fixed:
+
+  - **Spam**: With 2 Fly.io instances running, both could pass the rate limit check simultaneously before either updated `last_outreach_at`. Now the claim is atomic (UPDATE ... WHERE within rate limit window) so only one instance wins.
+  - **Not linked**: Email-based auto-link only ran on `user.created` webhook. Users who joined Slack after signing up, or whose webhook failed, were never retried. Now also runs on every login.
+
+- dfc8203: Update sync_audiences spec with clarifications
+
 ## 3.0.0-rc.1
 
 ### Major Changes
