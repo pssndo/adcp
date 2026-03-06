@@ -15,8 +15,9 @@
     "javascript",
     "vast",
     "daast",
-    "promoted_offerings",
     "url",
-    "webhook"
+    "webhook",
+    "brief",
+    "catalog"
   ]
 }

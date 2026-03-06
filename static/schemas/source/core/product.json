@@ -63,8 +63,8 @@
       "$ref": "/schemas/core/delivery-forecast.json",
       "description": "Forecasted delivery metrics for this product. Gives buyers an estimate of expected performance before requesting a proposal."
     },
-    "measurement": {
-      "$ref": "/schemas/core/measurement.json"
+    "outcome_measurement": {
+      "$ref": "/schemas/core/outcome-measurement.json"
     },
     "delivery_measurement": {
       "type": "object",
@@ -110,9 +110,64 @@
       "default": false,
       "description": "Whether buyers can filter this product to a subset of its data_provider_signals. When false (default), the product includes all listed signals as a bundle. When true, buyers can target specific signals."
     },
+    "catalog_types": {
+      "type": "array",
+      "description": "Catalog types this product supports for catalog-driven campaigns. A sponsored product listing declares [\"product\"], a job board declares [\"job\", \"offering\"]. Buyers match synced catalogs to products via this field.",
+      "items": {
+        "$ref": "/schemas/enums/catalog-type.json"
+      },
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "metric_optimization": {
+      "type": "object",
+      "description": "Metric optimization capabilities for this product. Presence indicates the product supports optimization_goals with kind: 'metric'. No event source or conversion tracking setup required — the seller tracks these metrics natively.",
+      "properties": {
+        "supported_metrics": {
+          "type": "array",
+          "description": "Metric kinds this product can optimize for. Buyers should only request metric goals for kinds listed here.",
+          "items": {
+            "type": "string",
+            "enum": ["clicks", "views", "completed_views", "viewed_seconds", "attention_seconds", "attention_score", "engagements", "follows", "saves", "profile_visits", "reach"]
+          },
+          "minItems": 1
+        },
+        "supported_reach_units": {
+          "type": "array",
+          "description": "Reach units this product can optimize for. Required when supported_metrics includes 'reach'. Buyers must set reach_unit to a value in this list on reach optimization goals — sellers reject unsupported values.",
+          "items": {
+            "$ref": "/schemas/enums/reach-unit.json"
+          },
+          "minItems": 1
+        },
+        "supported_view_durations": {
+          "type": "array",
+          "description": "Video view duration thresholds (in seconds) this product supports for completed_views goals. Only relevant when supported_metrics includes 'completed_views'. When absent, the seller uses their platform default. Buyers must set view_duration_seconds to a value in this list — sellers reject unsupported values.",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "supported_targets": {
+          "type": "array",
+          "description": "Target kinds available for metric goals on this product. Values match target.kind on the optimization goal. Only these target kinds are accepted — goals with unlisted target kinds will be rejected. When omitted, buyers can set target-less metric goals (maximize volume within budget) but cannot set specific targets.",
+          "items": {
+            "type": "string",
+            "enum": ["cost_per", "threshold_rate"]
+          }
+        }
+      },
+      "required": ["supported_metrics"],
+      "additionalProperties": true
+    },
+    "max_optimization_goals": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Maximum number of optimization_goals this product accepts on a package. When absent, no limit is declared. Most social platforms accept only 1 goal — buyers sending arrays longer than this value should expect the seller to use only the highest-priority (lowest priority number) goal."
+    },
     "conversion_tracking": {
       "type": "object",
-      "description": "Conversion tracking for this product. Presence indicates the product supports conversion-optimized delivery. Seller-level capabilities (supported event types, UID types, attribution windows) are declared in get_adcp_capabilities.",
+      "description": "Conversion event tracking for this product. Presence indicates the product supports optimization_goals with kind: 'event'. Seller-level capabilities (supported event types, UID types, attribution windows) are declared in get_adcp_capabilities.",
       "properties": {
         "action_sources": {
           "type": "array",
@@ -122,12 +177,16 @@
           },
           "minItems": 1
         },
-        "supported_optimization_strategies": {
+        "supported_targets": {
           "type": "array",
-          "description": "Optimization strategies this product supports when an optimization_goal is set on a package",
+          "description": "Target kinds available for event goals on this product. Values match target.kind on the optimization goal. cost_per: target cost per conversion event. per_ad_spend: target return on ad spend (requires value_field on event sources). maximize_value: maximize total conversion value without a specific ratio target (requires value_field). Only these target kinds are accepted — goals with unlisted target kinds will be rejected. A goal without a target implicitly maximizes conversion count within budget — no declaration needed for that mode. When omitted, buyers can still set target-less event goals.",
           "items": {
             "type": "string",
-            "enum": ["maximize_conversions", "target_cpa", "target_roas"]
+            "enum": [
+              "cost_per",
+              "per_ad_spend",
+              "maximize_value"
+            ]
           },
           "minItems": 1
         },
@@ -140,26 +199,31 @@
     },
     "catalog_match": {
       "type": "object",
-      "description": "When the buyer provides a brand with product_catalog, indicates which of the buyer's catalog items are eligible for this product. Enables buyers to make informed product_selector choices in create_media_buy. Only present for products where catalog matching is relevant (e.g. sponsored product listings on retail media). Sellers SHOULD include at least one of matched_gtins or matched_skus.",
+      "description": "When the buyer provides a catalog on get_products, indicates which catalog items are eligible for this product. Only present for products where catalog matching is relevant (e.g., sponsored product listings, job boards, hotel ads).",
       "properties": {
         "matched_gtins": {
           "type": "array",
-          "description": "GTINs from the buyer's catalog that are eligible on this product's inventory. Buyers can use these values in product_selectors.manifest_gtins when creating media buys. Standard GTIN formats (GTIN-8 through GTIN-14).",
+          "description": "GTINs from the buyer's catalog that are eligible on this product's inventory. Standard GTIN formats (GTIN-8 through GTIN-14). Only present for product-type catalogs with GTIN matching.",
           "items": {
             "type": "string",
             "pattern": "^[0-9]{8,14}$"
           }
         },
-        "matched_skus": {
+        "matched_ids": {
           "type": "array",
-          "description": "SKUs from the buyer's catalog that are eligible on this product's inventory. Buyers can use these values in product_selectors.manifest_skus when creating media buys.",
+          "description": "Item IDs from the buyer's catalog that matched this product's inventory. The ID type depends on the catalog type and content_id_type (e.g., SKUs for product catalogs, job_ids for job catalogs, offering_ids for offering catalogs).",
           "items": {
             "type": "string"
           }
         },
+        "matched_count": {
+          "type": "integer",
+          "description": "Number of catalog items that matched this product's inventory.",
+          "minimum": 0
+        },
         "submitted_count": {
           "type": "integer",
-          "description": "Total catalog items evaluated from the buyer's feed.",
+          "description": "Total catalog items evaluated from the buyer's catalog.",
           "minimum": 0
         }
       },

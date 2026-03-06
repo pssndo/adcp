@@ -29,12 +29,13 @@ import { PropertyDatabase } from "./db/property-db.js";
 import * as manifestRefsDb from "./db/manifest-refs-db.js";
 import { JoinRequestDatabase } from "./db/join-request-db.js";
 import { SlackDatabase } from "./db/slack-db.js";
-import { syncSlackUsers, getSyncStatus } from "./slack/sync.js";
+import { syncSlackUsers, getSyncStatus, tryAutoLinkWebsiteUserToSlack } from "./slack/sync.js";
 import { isSlackConfigured, testSlackConnection } from "./slack/client.js";
 import { handleSlashCommand } from "./slack/commands.js";
 import { getCompanyDomain } from "./utils/email-domain.js";
-import { requireAuth, requireAdmin, optionalAuth, invalidateSessionCache, isDevModeEnabled, getDevUser, getAvailableDevUsers, getDevSessionCookieName, DEV_USERS, type DevUserConfig } from "./middleware/auth.js";
-import { invitationRateLimiter, orgCreationRateLimiter, bulkResolveRateLimiter, brandCreationRateLimiter } from "./middleware/rate-limit.js";
+import { requireAuth, requireAdmin, requireManage, optionalAuth, invalidateSessionCache, isDevModeEnabled, getDevUser, getAvailableDevUsers, getDevSessionCookieName, DEV_USERS, type DevUserConfig } from "./middleware/auth.js";
+import { isWebUserAAOCouncil } from "./addie/mcp/admin-tools.js";
+import { invitationRateLimiter, orgCreationRateLimiter, bulkResolveRateLimiter, brandCreationRateLimiter, notificationRateLimiter } from "./middleware/rate-limit.js";
 import { validateOrganizationName, validateEmail } from "./middleware/validation.js";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
@@ -52,6 +53,7 @@ import { createMoltbookAdminRouter } from "./routes/moltbook-admin.js";
 import { createAddieChatRouter } from "./routes/addie-chat.js";
 import { createSiChatRoutes } from "./routes/si-chat.js";
 import { sendAccountLinkedMessage, invalidateMemberContextCache, isAddieBoltReady } from "./addie/index.js";
+import { invalidateMembershipCache } from "./db/org-filters.js";
 import { isWebUserAAOAdmin } from "./addie/mcp/admin-tools.js";
 import { createSlackRouter } from "./routes/slack.js";
 import { createWebhooksRouter } from "./routes/webhooks.js";
@@ -62,19 +64,24 @@ import { registerAllJobs, JOB_NAMES } from "./addie/jobs/job-definitions.js";
 import { createBillingRouter } from "./routes/billing.js";
 import { createPublicBillingRouter } from "./routes/billing-public.js";
 import { createOrganizationsRouter } from "./routes/organizations.js";
+import { createReferralsRouter } from "./routes/referrals.js";
+import { convertReferral, listAllReferralCodes } from "./db/referral-codes-db.js";
 import { createEventsRouter } from "./routes/events.js";
 import { createLatestRouter } from "./routes/latest.js";
+import { createDigestRouter } from "./routes/digest.js";
 import { createCommitteeRouters } from "./routes/committees.js";
 import { createContentRouter, createMyContentRouter } from "./routes/content.js";
 import { createMeetingRouters } from "./routes/meetings.js";
 import { createMemberProfileRouter, createAdminMemberProfileRouter } from "./routes/member-profiles.js";
 import { createCommunityRouters } from "./routes/community.js";
 import { createEngagementRouter } from "./routes/engagement.js";
+import { createNotificationRouter } from "./routes/notifications.js";
 import { CommunityDatabase } from "./db/community-db.js";
 import { OrgKnowledgeDatabase } from "./db/org-knowledge-db.js";
 import { WorkingGroupDatabase } from "./db/working-group-db.js";
 import { createAgentOAuthRouter } from "./routes/agent-oauth.js";
 import { createRegistryApiRouter } from "./routes/registry-api.js";
+import { getCachedLogo, isAllowedLogoContentType } from "./services/logo-cdn.js";
 import { createApiKeysRouter } from "./routes/api-keys.js";
 import { sendWelcomeEmail, sendUserSignupEmail, emailDb } from "./notifications/email.js";
 import { emailPrefsDb } from "./db/email-preferences-db.js";
@@ -276,7 +283,7 @@ async function upsertInvoiceCache(
  * Build app config object for injection into HTML pages.
  * This allows nav.js to read config synchronously instead of making an async fetch.
  */
-function buildAppConfig(user?: { id?: string; email: string; firstName?: string | null; lastName?: string | null; isMember?: boolean } | null) {
+function buildAppConfig(user?: { id?: string; email: string; firstName?: string | null; lastName?: string | null; isMember?: boolean } | null, isManage = false) {
   let isAdmin = false;
   if (user) {
     const adminEmails = process.env.ADMIN_EMAILS?.split(',').map(e => e.trim().toLowerCase()) || [];
@@ -291,6 +298,7 @@ function buildAppConfig(user?: { id?: string; email: string; firstName?: string 
       firstName: user.firstName,
       lastName: user.lastName,
       isAdmin,
+      isManage: isManage || isAdmin,
       isMember: !!user.isMember,
     } : null,
     posthog: POSTHOG_API_KEY ? {
@@ -303,8 +311,8 @@ function buildAppConfig(user?: { id?: string; email: string; firstName?: string 
 /**
  * Generate the script tags to inject app config and PostHog into HTML.
  */
-function getAppConfigScript(user?: { id?: string; email: string; firstName?: string | null; lastName?: string | null; isMember?: boolean } | null): string {
-  const config = buildAppConfig(user);
+function getAppConfigScript(user?: { id?: string; email: string; firstName?: string | null; lastName?: string | null; isMember?: boolean } | null, isManage = false): string {
+  const config = buildAppConfig(user, isManage);
   const configScript = `<script>window.__APP_CONFIG__=${JSON.stringify(config)};</script>`;
 
   // Add PostHog script if API key is configured
@@ -504,8 +512,8 @@ export class HTTPServer {
           // Stable versions come before prereleases (no prerelease = higher precedence)
           if (!av.prerelease && bv.prerelease) return -1;
           if (av.prerelease && !bv.prerelease) return 1;
-          // Both have prereleases, sort alphabetically (beta.1 < beta.2)
-          if (av.prerelease && bv.prerelease) return av.prerelease.localeCompare(bv.prerelease);
+          // Both have prereleases, sort descending (beta.3 before beta.1)
+          if (av.prerelease && bv.prerelease) return bv.prerelease.localeCompare(av.prerelease);
           return 0;
         });
 
@@ -596,13 +604,6 @@ export class HTTPServer {
         // Build aliases list
         const aliases: Array<{ alias: string, resolves_to: string, path: string }> = [];
 
-        // v1 -> latest (backward compatibility)
-        aliases.push({
-          alias: "v1",
-          resolves_to: "latest",
-          path: "/schemas/v1/"
-        });
-
         // Major version aliases (e.g., v2 -> 2.6.0)
         if (latestMajorVersion) {
           const { major } = parseSemver(latestMajorVersion);
@@ -649,13 +650,13 @@ export class HTTPServer {
       res.setHeader('Cache-Control', 'public, max-age=3600');
       if (this.isAdcpDomain(req)) {
         return res.json({
-          "$schema": "https://adcontextprotocol.org/schemas/v1/brand.json",
+          "$schema": "https://adcontextprotocol.org/schemas/latest/brand.json",
           "house": "agenticadvertising.org",
           "note": "AdCP is a sub-brand of AgenticAdvertising.org"
         });
       }
       return res.json({
-        "$schema": "https://adcontextprotocol.org/schemas/v1/brand.json",
+        "$schema": "https://adcontextprotocol.org/schemas/latest/brand.json",
         "authoritative_location": "https://agenticadvertising.org/brands/agenticadvertising.org/brand.json"
       });
     });
@@ -687,6 +688,13 @@ export class HTTPServer {
     // Intercepts both .html requests and extensionless paths that map to .html files
     this.app.use(async (req, res, next) => {
       const urlPath = req.path;
+
+      // Skip paths that have their own route handlers which manage auth and config injection
+      // (e.g. /dashboard injects isManage; /manage requires kitchen-cabinet auth;
+      // /agents does content negotiation to serve HTML or JSON)
+      if (urlPath.startsWith('/manage') || urlPath.startsWith('/dashboard') || urlPath === '/agents') {
+        return next();
+      }
 
       // Determine the file path to check
       let filePath: string;
@@ -758,9 +766,20 @@ export class HTTPServer {
       const user = await getUserFromRequest(req, res);
       await enrichUserWithMembership(user);
 
+      // Determine manage-tier access for nav rendering
+      let isManage = false;
+      if (user) {
+        if (isDevModeEnabled()) {
+          const devUser = getDevUser(req);
+          isManage = devUser?.isManage ?? false;
+        } else if (user.id) {
+          isManage = await isWebUserAAOCouncil(user.id) || await isWebUserAAOAdmin(user.id);
+        }
+      }
+
       // Read and inject config
       let html = await fs.readFile(filePath, 'utf-8');
-      const configScript = getAppConfigScript(user);
+      const configScript = getAppConfigScript(user, isManage);
 
       // Inject before </head>
       if (html.includes('</head>')) {
@@ -867,6 +886,10 @@ export class HTTPServer {
     const organizationsRouter = createOrganizationsRouter();
     this.app.use('/api/organizations', organizationsRouter); // Organization API routes: /api/organizations/*
 
+    // Mount public referral routes
+    const referralsRouter = createReferralsRouter();
+    this.app.use('/api', referralsRouter); // Public referral routes: /api/referral/*
+
     // Mount public Registry API routes (brands, properties, agents, search, validation)
     const registryApiRouter = createRegistryApiRouter({
       brandManager: this.brandManager,
@@ -909,6 +932,37 @@ export class HTTPServer {
       }
     });
 
+    // Serve cached brand logos — public endpoint so agents can download them.
+    // Logos are stored in brand_logo_cache when brands are enriched via Brandfetch.
+    const logoDomainPattern = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
+    this.app.get('/logos/brands/:domain/:idx', async (req, res) => {
+      const domain = req.params.domain.toLowerCase();
+      const idx = parseInt(req.params.idx, 10);
+      if (!logoDomainPattern.test(domain)) {
+        return res.status(400).json({ error: 'Invalid domain' });
+      }
+      if (isNaN(idx) || idx < 0 || idx > 999) {
+        return res.status(400).json({ error: 'Invalid logo index' });
+      }
+      try {
+        const logo = await getCachedLogo(domain, idx);
+        if (!logo) {
+          return res.status(404).json({ error: 'Logo not found' });
+        }
+        if (!isAllowedLogoContentType(logo.content_type)) {
+          logger.error({ domain, idx, contentType: logo.content_type }, 'Cached logo has disallowed content-type');
+          return res.status(500).json({ error: 'Failed to retrieve logo' });
+        }
+        res.setHeader('Content-Type', logo.content_type);
+        res.setHeader('Cache-Control', 'public, max-age=2592000'); // 30 days
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        return res.send(logo.data);
+      } catch (error) {
+        logger.error({ err: error, domain, idx }, 'Failed to serve logo');
+        return res.status(500).json({ error: 'Failed to retrieve logo' });
+      }
+    });
+
     // Mount member profile routes
     const memberDb = new MemberDatabase();
     const orgDb = new OrganizationDatabase();
@@ -937,6 +991,9 @@ export class HTTPServer {
     const engagementRouter = createEngagementRouter({ orgDb, orgKnowledgeDb, workingGroupDb });
     this.app.use('/api/me/engagement', engagementRouter);
 
+    // Mount notification routes
+    this.app.use('/api/notifications', notificationRateLimiter, createNotificationRouter());
+
     // Mount API key management routes
     this.app.use('/api/me/api-keys', createApiKeysRouter());
 
@@ -950,6 +1007,9 @@ export class HTTPServer {
     const { pageRouter: latestPageRouter, apiRouter: latestApiRouter } = createLatestRouter();
     this.app.use('/', latestPageRouter);                    // Page routes: /latest, /latest/:slug
     this.app.use('/api', latestApiRouter);                  // API routes: /api/latest/*
+
+    // Mount weekly digest routes (public web view)
+    this.app.use('/digest', createDigestRouter());
 
     // Mount webhook routes (external services like Resend, WorkOS)
     const webhooksRouter = createWebhooksRouter();
@@ -1364,7 +1424,18 @@ export class HTTPServer {
         // Inject user config for nav.js, passing res to update cookie if session is refreshed
         const user = await getUserFromRequest(req, res);
         await enrichUserWithMembership(user);
-        const configScript = getAppConfigScript(user);
+
+        let isManage = false;
+        if (user) {
+          if (isDevModeEnabled()) {
+            const devUser = getDevUser(req);
+            isManage = devUser?.isManage ?? false;
+          } else if (user.id) {
+            isManage = await isWebUserAAOCouncil(user.id) || await isWebUserAAOAdmin(user.id);
+          }
+        }
+
+        const configScript = getAppConfigScript(user, isManage);
         if (html.includes('</head>')) {
           html = html.replace('</head>', `${configScript}\n</head>`);
         }
@@ -1402,7 +1473,18 @@ export class HTTPServer {
         // Inject user config for nav.js, passing res to update cookie if session is refreshed
         const user = await getUserFromRequest(req, res);
         await enrichUserWithMembership(user);
-        const configScript = getAppConfigScript(user);
+
+        let isManage = false;
+        if (user) {
+          if (isDevModeEnabled()) {
+            const devUser = getDevUser(req);
+            isManage = devUser?.isManage ?? false;
+          } else if (user.id) {
+            isManage = await isWebUserAAOCouncil(user.id) || await isWebUserAAOAdmin(user.id);
+          }
+        }
+
+        const configScript = getAppConfigScript(user, isManage);
         if (html.includes('</head>')) {
           html = html.replace('</head>', `${configScript}\n</head>`);
         }
@@ -1603,11 +1685,13 @@ export class HTTPServer {
 
 
 
-    // Simple REST API endpoint - for web apps and quick integrations
+    // Agent registry - serves HTML for browsers, JSON for API clients
     this.app.get("/agents", async (req, res) => {
+      if (req.accepts('text/html', 'application/json') === 'text/html') {
+        return this.serveHtmlWithConfig(req, res, 'agents.html');
+      }
       const type = req.query.type as AgentType | undefined;
       const agents = await this.agentService.listAgents(type);
-
       res.json({
         agents,
         count: agents.length,
@@ -1745,6 +1829,9 @@ export class HTTPServer {
     this.app.get("/community/connections", async (req, res) => {
       await this.serveHtmlWithConfig(req, res, 'community/connections.html');
     });
+    this.app.get("/community/notifications", async (req, res) => {
+      await this.serveHtmlWithConfig(req, res, 'community/notifications.html');
+    });
     this.app.get("/community/profile/edit", async (req, res) => {
       await this.serveHtmlWithConfig(req, res, 'community/profile-edit.html');
     });
@@ -1767,6 +1854,11 @@ export class HTTPServer {
     // Properties registry page (redirects to publishers - consolidated)
     this.app.get("/properties", (_req, res) => {
       res.redirect(301, '/publishers');
+    });
+
+    // Referral landing page - personalized invite page for prospects
+    this.app.get("/join/:code", async (req, res) => {
+      await this.serveHtmlWithConfig(req, res, 'join.html');
     });
 
     // About AAO page - serve about.html at /about
@@ -3256,6 +3348,7 @@ export class HTTPServer {
                 // Invalidate member context cache for all users in this org
                 // (subscription status affects is_member and subscription fields)
                 invalidateMemberContextCache();
+                invalidateMembershipCache(org.workos_organization_id);
 
                 // Send Slack notification for subscription cancellation
                 if (event.type === 'customer.subscription.deleted') {
@@ -3462,6 +3555,7 @@ export class HTTPServer {
 
                 // Invalidate member context cache
                 invalidateMemberContextCache();
+                invalidateMembershipCache(org.workos_organization_id);
               }
 
               // Record revenue event
@@ -3821,6 +3915,15 @@ export class HTTPServer {
             const customerId = session.customer as string | null;
             const workosOrgId = session.metadata?.workos_organization_id;
 
+            if (workosOrgId) {
+              // Mark any pending referral as converted
+              try {
+                await convertReferral(workosOrgId);
+              } catch (err) {
+                logger.warn({ err, workosOrgId }, 'Failed to convert referral on checkout completion');
+              }
+            }
+
             if (customerId && workosOrgId) {
               // Ensure the Stripe customer is linked to the organization.
               // This catches cases where the checkout session was created with
@@ -3865,6 +3968,21 @@ export class HTTPServer {
         res.status(500).json({ error: 'Webhook processing failed' });
       }
     });
+
+    // Manage routes — kitchen cabinet + admin
+    this.app.get('/manage', requireAuth, requireManage, (req, res) =>
+      this.serveHtmlWithConfig(req, res, 'manage.html'));
+    this.app.get('/manage/referrals', requireAuth, requireManage, (req, res) =>
+      this.serveHtmlWithConfig(req, res, 'manage-referrals.html'));
+    this.app.get('/manage/prospects', requireAuth, requireManage, (req, res) =>
+      this.serveHtmlWithConfig(req, res, 'manage-prospects.html'));
+    this.app.get('/manage/accounts', requireAuth, (req, res) => res.redirect(302, '/admin/accounts'));
+    this.app.get('/manage/analytics', requireAuth, requireManage, (req, res) =>
+      this.serveHtmlWithConfig(req, res, 'manage-analytics.html'));
+
+    // Redirect moved admin pages to their new /manage paths
+    this.app.get('/admin/prospects', (req, res) => res.redirect(302, '/manage/prospects'));
+    this.app.get('/admin/analytics', (req, res) => res.redirect(302, '/manage/analytics'));
 
     // Admin routes
     // GET /admin - Admin landing page
@@ -4133,22 +4251,74 @@ export class HTTPServer {
     });
 
     // GET /api/admin/analytics-data - Get simple analytics data from views
-    this.app.get('/api/admin/analytics-data', requireAuth, requireAdmin, async (req, res) => {
+    this.app.get('/api/admin/analytics-data', requireAuth, requireManage, async (req, res) => {
       try {
         const pool = getPool();
         // Query all analytics views
-        const [revenueByMonth, customerHealth, subscriptionMetrics, productRevenue, totalRevenue, totalCustomers] = await Promise.all([
+        const [revenueByMonth, customerHealth, subscriptionMetrics, productRevenue, totalRevenue, totalCustomers, outstandingSummary, outstandingList, recentSignups, payingCustomersByMonth] = await Promise.all([
           pool.query('SELECT * FROM revenue_by_month ORDER BY month DESC LIMIT 12'),
           pool.query('SELECT * FROM customer_health ORDER BY customer_since DESC'),
           pool.query('SELECT * FROM subscription_metrics LIMIT 1'),
           pool.query('SELECT * FROM product_revenue ORDER BY total_revenue DESC'),
           pool.query('SELECT SUM(net_revenue) as total FROM revenue_by_month'),
           pool.query('SELECT COUNT(*) as total FROM customer_health'),
+          pool.query(`
+            SELECT COUNT(*) as count, COALESCE(SUM(amount_due), 0) as total_cents
+            FROM org_invoices
+            WHERE status IN ('draft', 'open')
+          `),
+          pool.query(`
+            SELECT oi.stripe_invoice_id, oi.amount_due, oi.status, oi.due_date,
+              oi.hosted_invoice_url, oi.invoice_number, oi.product_name,
+              oi.customer_email, oi.created_at,
+              o.name as org_name, o.workos_organization_id as org_id
+            FROM org_invoices oi
+            LEFT JOIN organizations o ON o.workos_organization_id = oi.workos_organization_id
+            WHERE oi.status IN ('draft', 'open')
+            ORDER BY oi.due_date ASC NULLS LAST
+          `),
+          pool.query(`
+            SELECT workos_organization_id as org_id, name, company_type,
+              subscription_amount, subscription_interval, created_at
+            FROM organizations
+            WHERE subscription_status = 'active'
+              AND subscription_canceled_at IS NULL
+              AND created_at >= NOW() - INTERVAL '90 days'
+              AND is_personal IS NOT TRUE
+            ORDER BY created_at DESC
+            LIMIT 20
+          `),
+          pool.query(`
+            SELECT
+              TO_CHAR(DATE_TRUNC('month', re.paid_at), 'YYYY-MM') AS month,
+              array_agg(DISTINCT o.name ORDER BY o.name) AS customer_names
+            FROM revenue_events re
+            JOIN organizations o ON o.workos_organization_id = re.workos_organization_id
+            WHERE re.amount_paid > 0
+              AND re.paid_at IS NOT NULL
+              AND re.paid_at >= NOW() - INTERVAL '12 months'
+            GROUP BY DATE_TRUNC('month', re.paid_at)
+          `),
         ]);
 
         const metrics = subscriptionMetrics.rows[0] || {};
+        const outstandingRow = outstandingSummary.rows[0] || {};
+        const customerNamesByMonth = new Map(
+          payingCustomersByMonth.rows.map((r: any) => [r.month as string, r.customer_names as string[]])
+        );
+        const toMonthKey = (month: string | Date): string => {
+          if (!month) return '';
+          if (typeof month === 'string') return month.slice(0, 7);
+          // Use UTC components to match PostgreSQL's TO_CHAR output (assumes UTC Postgres, standard for production)
+          const year = month.getUTCFullYear();
+          const m = String(month.getUTCMonth() + 1).padStart(2, '0');
+          return `${year}-${m}`;
+        };
         res.json({
-          revenue_by_month: revenueByMonth.rows,
+          revenue_by_month: revenueByMonth.rows.map((row: any) => ({
+            ...row,
+            paying_customer_names: customerNamesByMonth.get(toMonthKey(row.month)) || [],
+          })),
           customer_health: customerHealth.rows,
           subscription_metrics: {
             ...metrics,
@@ -4157,6 +4327,31 @@ export class HTTPServer {
             total_customers: totalCustomers.rows[0]?.total || 0,
           },
           product_revenue: productRevenue.rows,
+          outstanding_invoices_summary: {
+            count: Number(outstandingRow.count) || 0,
+            total_dollars: (Number(outstandingRow.total_cents) || 0) / 100,
+          },
+          outstanding_invoices: outstandingList.rows.map((row: any) => ({
+            stripe_invoice_id: row.stripe_invoice_id,
+            amount_due_dollars: (row.amount_due || 0) / 100,
+            status: row.status,
+            due_date: row.due_date,
+            hosted_invoice_url: row.hosted_invoice_url,
+            invoice_number: row.invoice_number,
+            product_name: row.product_name,
+            customer_email: row.customer_email,
+            created_at: row.created_at,
+            org_name: row.org_name,
+            org_id: row.org_id,
+          })),
+          recent_signups: recentSignups.rows.map((row: any) => ({
+            org_id: row.org_id,
+            name: row.name,
+            company_type: row.company_type,
+            subscription_amount_dollars: (row.subscription_amount || 0) / 100,
+            subscription_interval: row.subscription_interval,
+            created_at: row.created_at,
+          })),
         });
       } catch (error) {
         logger.error({ err: error }, 'Error fetching analytics data');
@@ -4164,6 +4359,17 @@ export class HTTPServer {
           error: 'Internal server error',
           message: 'Unable to fetch analytics data',
         });
+      }
+    });
+
+    // GET /api/admin/referrals - Aggregate referral activity for manage tier
+    this.app.get('/api/admin/referrals', requireAuth, requireManage, async (_req, res) => {
+      try {
+        const rows = await listAllReferralCodes();
+        res.json(rows);
+      } catch (error) {
+        logger.error({ err: error }, 'Error fetching referral data');
+        res.status(500).json({ error: 'Internal server error', message: 'Unable to fetch referral data' });
       }
     });
 
@@ -4690,10 +4896,6 @@ Disallow: /api/admin/
       await this.serveHtmlWithConfig(req, res, 'admin-agreements.html');
     });
 
-    this.app.get('/admin/analytics', requireAuth, requireAdmin, async (req, res) => {
-      await this.serveHtmlWithConfig(req, res, 'admin-analytics.html');
-    });
-
     this.app.get('/admin/audit', requireAuth, requireAdmin, async (req, res) => {
       await this.serveHtmlWithConfig(req, res, 'admin-audit.html');
     });
@@ -5164,6 +5366,25 @@ Disallow: /api/admin/
             // Log but don't fail authentication if linking fails
             logger.error({ error: linkError, slackUserId: slackUserIdToLink }, 'Failed to auto-link Slack account');
           }
+        } else {
+          // No slack_user_id in state — attempt email-based auto-link for returning users.
+          // user.created webhook only fires at signup; this catches users whose Slack account
+          // was added after they signed up on the website.
+          try {
+            const slackDbForLink = new SlackDatabase();
+            const existingSlackMapping = await slackDbForLink.getByWorkosUserId(user.id);
+            if (!existingSlackMapping) {
+              const linkResult = await tryAutoLinkWebsiteUserToSlack(user.id, user.email);
+              if (linkResult.linked) {
+                logger.info(
+                  { workosUserId: user.id, slackUserId: linkResult.slack_user_id },
+                  'Email-based auto-link on login'
+                );
+              }
+            }
+          } catch (linkError) {
+            logger.warn({ error: linkError, workosUserId: user.id }, 'Failed to email auto-link on login');
+          }
         }
 
         // Redirect to dashboard or onboarding
@@ -5283,6 +5504,7 @@ Disallow: /api/admin/
               first_name: user.firstName,
               last_name: user.lastName,
               isAdmin: devUser.isAdmin,
+              isManage: devUser.isManage || devUser.isAdmin,
             },
             organizations,
             // Include dev mode info for debugging
@@ -5323,6 +5545,7 @@ Disallow: /api/admin/
         // Check if user is admin
         const adminEmails = process.env.ADMIN_EMAILS?.split(',').map(e => e.trim().toLowerCase()) || [];
         const isAdmin = adminEmails.includes(user.email.toLowerCase());
+        const isManage = isAdmin || await isWebUserAAOCouncil(user.id);
 
         // Build response with optional impersonation info
         const response: Record<string, unknown> = {
@@ -5332,6 +5555,7 @@ Disallow: /api/admin/
             first_name: user.firstName,
             last_name: user.lastName,
             isAdmin,
+            isManage,
           },
           organizations,
         };
@@ -6258,8 +6482,8 @@ Disallow: /api/admin/
               const bj = hosted.brand_json as Record<string, unknown>;
               const brands = bj.brands as Array<Record<string, unknown>> | undefined;
               const primaryBrand = brands?.[0];
-              const logos = primaryBrand?.logos as Array<Record<string, unknown>> | undefined;
-              const colors = primaryBrand?.colors as Record<string, unknown> | undefined;
+              const logos = (primaryBrand?.logos ?? bj.logos) as Array<Record<string, unknown>> | undefined;
+              const colors = (primaryBrand?.colors ?? bj.colors) as Record<string, unknown> | undefined;
               profile.resolved_brand = { domain: profile.primary_brand_domain, logo_url: logos?.[0]?.url as string | undefined, brand_color: colors?.primary as string | undefined, verified: hosted.domain_verified };
             }
           }
@@ -6288,8 +6512,8 @@ Disallow: /api/admin/
               const bj = hosted.brand_json as Record<string, unknown>;
               const brands = bj.brands as Array<Record<string, unknown>> | undefined;
               const primaryBrand = brands?.[0];
-              const logos = primaryBrand?.logos as Array<Record<string, unknown>> | undefined;
-              const colors = primaryBrand?.colors as Record<string, unknown> | undefined;
+              const logos = (primaryBrand?.logos ?? bj.logos) as Array<Record<string, unknown>> | undefined;
+              const colors = (primaryBrand?.colors ?? bj.colors) as Record<string, unknown> | undefined;
               profile.resolved_brand = { domain: profile.primary_brand_domain, logo_url: logos?.[0]?.url as string | undefined, brand_color: colors?.primary as string | undefined, verified: hosted.domain_verified };
             }
           }
@@ -6398,8 +6622,8 @@ Disallow: /api/admin/
             const bj = hostedBrand.brand_json as Record<string, unknown>;
             const brands = bj.brands as Array<Record<string, unknown>> | undefined;
             const primaryBrand = brands?.[0];
-            const logos = primaryBrand?.logos as Array<Record<string, unknown>> | undefined;
-            const colors = primaryBrand?.colors as Record<string, unknown> | undefined;
+            const logos = (primaryBrand?.logos ?? bj.logos) as Array<Record<string, unknown>> | undefined;
+            const colors = (primaryBrand?.colors ?? bj.colors) as Record<string, unknown> | undefined;
             profile.resolved_brand = { domain: profile.primary_brand_domain, logo_url: logos?.[0]?.url as string | undefined, brand_color: colors?.primary as string | undefined, verified: hostedBrand.domain_verified };
           }
         }
@@ -6675,7 +6899,7 @@ Disallow: /api/admin/
           stats.product_count = 0;
           stats.publisher_count = 0;
           try {
-            const result = await client.getProducts({ brief: '' });
+            const result = await client.getProducts({ buying_mode: 'wholesale' });
             if (result.data?.products) {
               stats.product_count = result.data.products.length;
             }
@@ -6871,6 +7095,7 @@ Disallow: /api/admin/
     jobScheduler.start(JOB_NAMES.TASK_REMINDER);
     jobScheduler.start(JOB_NAMES.ENGAGEMENT_SCORING);
     jobScheduler.start(JOB_NAMES.GOAL_FOLLOW_UP);
+    jobScheduler.start(JOB_NAMES.SLACK_AUTO_LINK);
 
     // Start Moltbook jobs only if API key is configured
     if (process.env.MOLTBOOK_API_KEY) {

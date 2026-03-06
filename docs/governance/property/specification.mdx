@@ -194,9 +194,9 @@ Discover what features a governance agent can evaluate.
 
 Create a new property list with filters and optional brand reference.
 
-**Required Parameters**:
-- At least one country in `countries_all` (ISO 3166-1 alpha-2 code)
-- At least one channel in `channels_any` (display, video, audio, etc.)
+**Optional Filters**:
+- `countries_all` (string[]): ISO 3166-1 alpha-2 country codes — property must have data for ALL. Omit for global lists.
+- `channels_any` (string[]): Advertising channels — property must support ANY. Omit for all-channel lists.
 
 **Base Properties**: An array of property sources to evaluate. Each entry is a discriminated union with `selection_type` as the discriminator:
 - **`publisher_tags`**: `{ "selection_type": "publisher_tags", "publisher_domain": "...", "tags": [...] }` - tags scoped to publisher
@@ -204,7 +204,7 @@ Create a new property list with filters and optional brand reference.
 - **`identifiers`**: `{ "selection_type": "identifiers", "identifiers": [...] }` - no publisher context needed
 - **Omitted**: Query the agent's entire property database
 
-See the [base-property-source schema](https://adcontextprotocol.org/schemas/v2/property/base-property-source.json) for the full specification.
+See the [base-property-source schema](https://adcontextprotocol.org/schemas/v3/property/base-property-source.json) for the full specification.
 
 **Filter Logic** (explicit in field names):
 - `countries_all`: Property must have feature data for **ALL** listed countries

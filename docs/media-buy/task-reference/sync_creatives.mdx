@@ -114,7 +114,7 @@ asyncio.run(main())
 | `creative_id` | string   | Yes      | Unique identifier for this creative                                |
 | `name`        | string   | Yes      | Human-readable name                                                |
 | `format_id`   | FormatId | Yes      | Format specification (structured object with `agent_url` and `id`) |
-| `assets`      | object   | Yes      | Assets keyed by role (e.g., `{video: {...}, thumbnail: {...}}`)    |
+| `assets`      | object   | Yes      | Assets keyed by role (e.g., `{video: {...}, thumbnail: {...}}`). Catalogs are included as assets with `asset_type: "catalog"`. See [Catalogs](/docs/creative/catalogs). |
 | `tags`        | string[] | No       | Searchable tags for creative organization                          |
 
 ### Asset Structure

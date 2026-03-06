@@ -19,6 +19,7 @@ import { logger } from '../logger.js';
 import { getPool, query } from '../db/client.js';
 import { resolveSlackUserDisplayName } from '../slack/client.js';
 import { PERSONA_LABELS } from '../config/personas.js';
+import { resolveEffectiveMembership } from '../db/org-filters.js';
 
 const slackDb = new SlackDatabase();
 const memberDb = new MemberDatabase();
@@ -169,8 +170,17 @@ export interface MemberContext {
   /** Whether the user is mapped to a WorkOS user */
   is_mapped: boolean;
 
-  /** Whether the user's organization is an AgenticAdvertising.org member (has active subscription) */
+  /** Whether the user's organization is an AgenticAdvertising.org member (has active subscription or inherited) */
   is_member: boolean;
+
+  /** Whether membership is inherited through the brand registry hierarchy */
+  is_inherited_member?: boolean;
+
+  /** If inherited, which org covers them */
+  covered_by?: {
+    org_id: string;
+    org_name: string;
+  };
 
   /** Slack user info */
   slack_user?: {
@@ -465,8 +475,19 @@ export async function getMemberContext(slackUserId: string): Promise<MemberConte
         subscription_status: org.subscription_status,
         is_personal: org.is_personal,
       };
-      // Only consider them a member if they have an active subscription AND it's not a personal workspace
-      context.is_member = org.subscription_status === 'active' && !org.is_personal;
+
+      // Check membership including inheritance through brand hierarchy
+      if (!org.is_personal) {
+        const membership = await resolveEffectiveMembership(organizationId);
+        context.is_member = membership.is_member;
+        if (membership.is_inherited && membership.paying_org_id) {
+          context.is_inherited_member = true;
+          context.covered_by = {
+            org_id: membership.paying_org_id,
+            org_name: membership.paying_org_name ?? 'Unknown',
+          };
+        }
+      }
     }
 
     // Process member profile (only for non-personal workspaces)
@@ -730,8 +751,19 @@ export async function getWebMemberContext(workosUserId: string): Promise<MemberC
         subscription_status: org.subscription_status,
         is_personal: org.is_personal,
       };
-      // Only consider them a member if they have an active subscription AND it's not a personal workspace
-      context.is_member = org.subscription_status === 'active' && !org.is_personal;
+
+      // Check membership including inheritance through brand hierarchy
+      if (!org.is_personal) {
+        const membership = await resolveEffectiveMembership(organizationId);
+        context.is_member = membership.is_member;
+        if (membership.is_inherited && membership.paying_org_id) {
+          context.is_inherited_member = true;
+          context.covered_by = {
+            org_id: membership.paying_org_id,
+            org_name: membership.paying_org_name ?? 'Unknown',
+          };
+        }
+      }
     }
 
     // Step 6: Get member profile if exists (only for non-personal workspaces)
@@ -938,6 +970,7 @@ export function formatMemberContextForPrompt(context: MemberContext, channel: 'w
       lines.push('**Status**: Anonymous user (not signed in)');
       lines.push('');
       lines.push('This user is browsing the web chat without signing in.');
+      lines.push('They do not have access to: member directory search (search_members), profile management, working group operations, or introduction requests. If they need these, suggest signing in at https://agenticadvertising.org. They CAN use: list_members (public directory), search_docs, search_repos, and other knowledge tools.');
       lines.push('');
       return lines.join('\n');
     }
@@ -986,9 +1019,9 @@ export function formatMemberContextForPrompt(context: MemberContext, channel: 'w
   }
 
   // Persona and journey stage
+  lines.push('');
+  lines.push('### Organization Persona');
   if (context.persona) {
-    lines.push('');
-    lines.push('### Organization Persona');
     lines.push(`Persona: ${PERSONA_LABELS[context.persona.persona] || context.persona.persona}`);
     if (context.persona.aspiration_persona) {
       lines.push(`Aspiration: ${PERSONA_LABELS[context.persona.aspiration_persona] || context.persona.aspiration_persona}`);
@@ -997,6 +1030,13 @@ export function formatMemberContextForPrompt(context: MemberContext, channel: 'w
       lines.push(`Journey stage: ${context.persona.journey_stage}`);
     }
     lines.push(`Classification source: ${context.persona.source}`);
+    if (context.persona.source !== 'diagnostic') {
+      lines.push('Note: Persona was inferred, not self-reported. The user has not completed the organization type assessment.');
+      lines.push('If it comes up naturally, suggest they discover their agentic archetype: https://agenticadvertising.org/persona-assessment');
+    }
+  } else {
+    lines.push('Persona: Not set — the user has not completed the organization type assessment.');
+    lines.push('If it comes up naturally, suggest they discover their agentic archetype: https://agenticadvertising.org/persona-assessment');
   }
 
   // Subscription details

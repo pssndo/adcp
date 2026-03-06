@@ -13,13 +13,15 @@
 import { logger } from '../../logger.js';
 import type { AddieTool } from '../types.js';
 import type { MemberContext } from '../member-context.js';
+import { SlackDatabase } from '../../db/slack-db.js';
 import {
-  runAgentTests,
-  formatTestResults,
+  testAllScenarios,
+  formatSuiteResults,
   setAgentTesterLogger,
-  createTestClient,
+  SCENARIO_REQUIREMENTS,
+  type OrchestratorOptions,
+  type SuiteResult,
   type TestScenario,
-  type TestOptions,
 } from '@adcp/client/testing';
 import { AgentContextDatabase } from '../../db/agent-context-db.js';
 import {
@@ -28,14 +30,22 @@ import {
   getPendingProposals,
 } from '../../db/industry-feeds-db.js';
 import { MemberDatabase } from '../../db/member-db.js';
-import { getPool } from '../../db/client.js';
+import { getPool, query } from '../../db/client.js';
 import { MemberSearchAnalyticsDatabase } from '../../db/member-search-analytics-db.js';
+import { OrganizationDatabase } from '../../db/organization-db.js';
+import { WorkingGroupDatabase } from '../../db/working-group-db.js';
+import { checkMilestones } from '../services/journey-computation.js';
+import { PERSONA_LABELS } from '../../config/personas.js';
+import { getRecommendedGroupsForOrg, type GroupRecommendation } from '../services/group-recommendations.js';
 import { sendIntroductionEmail } from '../../notifications/email.js';
 import { v4 as uuidv4 } from 'uuid';
 
 const memberDb = new MemberDatabase();
 const agentContextDb = new AgentContextDatabase();
 const memberSearchAnalyticsDb = new MemberSearchAnalyticsDatabase();
+const orgDb = new OrganizationDatabase();
+const wgDb = new WorkingGroupDatabase();
+const slackDb = new SlackDatabase();
 
 /**
  * Known open-source agents and their GitHub repositories.
@@ -172,12 +182,13 @@ export const MEMBER_TOOLS: AddieTool[] = [
   {
     name: 'get_working_group',
     description:
-      'Get details about a specific working group including its description, leaders, member count, and recent posts. Use the group slug (URL-friendly name).',
-    usage_hints: 'use for "tell me about X group", getting specific group details',
+      'Get details about a specific working group including its description, leaders, member count, and recent posts. Use the group slug (URL-friendly name). Pass include_members: true to get the full member list with names, org, and email (admins only for private groups).',
+    usage_hints: 'use for "tell me about X group", "who is in the Kitchen Cabinet", "list members of X committee/council/chapter"',
     input_schema: {
       type: 'object',
       properties: {
         slug: { type: 'string', description: 'Working group slug' },
+        include_members: { type: 'boolean', description: 'Return full member list with name, org, and email (default: false)' },
       },
       required: ['slug'],
     },
@@ -510,13 +521,13 @@ export const MEMBER_TOOLS: AddieTool[] = [
   {
     name: 'test_adcp_agent',
     description:
-      'Run end-to-end tests against an AdCP agent to verify it works correctly. Tests the full workflow: discover products, create media buys, sync creatives, etc. By default runs in dry-run mode - set dry_run=false for real testing. IMPORTANT: For agents requiring authentication (including the public test agent), users must first set up the agent. Use setup_test_agent for the public test agent, or save_agent for custom agents.',
-    usage_hints: 'use for "test my agent", "run the full flow", "verify my sales agent works", "test against test-agent", "test creative sync", "test pricing models", "try the API". If testing the public test agent and auth fails, suggest setup_test_agent first.',
+      'Run end-to-end tests against an AdCP agent to verify it works correctly. Automatically discovers the agent\'s capabilities and runs all applicable scenarios (discovery, media buy creation, creative sync, signals, governance, etc.). By default runs in dry-run mode - set dry_run=false for real testing. IMPORTANT: For agents requiring authentication (including the public test agent), users must first set up the agent. Use setup_test_agent for the public test agent, or save_agent for custom agents.',
+    usage_hints: 'use for "test my agent", "run the full test suite", "verify my sales agent works", "test against test-agent", "test creative sync", "test pricing models", "try the API". If testing the public test agent and auth fails, suggest setup_test_agent first.',
     input_schema: {
       type: 'object',
       properties: {
         agent_url: { type: 'string', description: 'Agent URL' },
-        scenario: { type: 'string', enum: ['health_check', 'discovery', 'create_media_buy', 'full_sales_flow', 'creative_sync', 'creative_inline', 'creative_reference', 'pricing_models', 'creative_flow', 'signals_flow', 'error_handling', 'validation', 'pricing_edge_cases', 'temporal_validation', 'behavior_analysis', 'response_consistency'], description: 'Test scenario' },
+        scenarios: { type: 'array', items: { type: 'string', enum: Object.keys(SCENARIO_REQUIREMENTS) as TestScenario[] }, description: 'Scenarios to run (defaults to all applicable scenarios based on agent capabilities)' },
         brief: { type: 'string', description: 'Custom brief' },
         budget: { type: 'number', description: 'Budget in dollars (default: 1000)' },
         dry_run: { type: 'boolean', description: 'Dry-run mode (default: true)' },
@@ -545,6 +556,7 @@ export const MEMBER_TOOLS: AddieTool[] = [
         agent_url: { type: 'string', description: 'Agent URL' },
         agent_name: { type: 'string', description: 'Agent name' },
         auth_token: { type: 'string', description: 'Auth token (stored encrypted)' },
+        auth_type: { type: 'string', enum: ['bearer', 'basic'], description: 'How the token is sent. "bearer" (default): sends Authorization: Bearer <token>. "basic": auth_token must be the base64-encoded "user:password" string, sent as Authorization: Basic <token>' },
         protocol: { type: 'string', enum: ['mcp', 'a2a'], description: 'Protocol (default: mcp)' },
       },
       required: ['agent_url'],
@@ -668,6 +680,17 @@ export const MEMBER_TOOLS: AddieTool[] = [
     description:
       'Get search analytics for the user\'s member profile. Shows how many times their profile appeared in searches, profile clicks, and introduction requests. Only works for members with a public profile.',
     usage_hints: 'use for "how is my profile performing?", "how many people have seen my profile?", "search analytics", "introduction stats"',
+    input_schema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'get_member_engagement',
+    description:
+      "Get the current user's organization engagement data: journey stage, engagement score, persona/archetype, milestone completion, and persona-based working group recommendations. Use this to understand where a member is in their journey and what actions would help them advance.",
+    usage_hints: 'use when a member asks what to do next, asks about their progress or archetype, when you want to recommend working groups, or when you notice low engagement and want to suggest actions proactively',
     input_schema: {
       type: 'object',
       properties: {},
@@ -829,6 +852,7 @@ export function createMemberToolHandlers(
 
   handlers.set('get_working_group', async (input) => {
     const slug = input.slug as string;
+    const includeMembers = (input.include_members as boolean) === true;
     const result = await callApi('GET', `/api/working-groups/${slug}`, memberContext);
 
     if (!result.ok) {
@@ -860,6 +884,55 @@ export function createMemberToolHandlers(
         response += `- ${leader.name || 'Unknown'}\n`;
       });
       response += `\n`;
+    }
+
+    if (includeMembers) {
+      // Check admin status — try WorkOS user ID first, then fall back to Slack user ID
+      let isAdmin = false;
+      const workosUserId = memberContext?.workos_user?.workos_user_id;
+      const slackUserId = memberContext?.slack_user?.slack_user_id;
+      const adminGroup = await wgDb.getWorkingGroupBySlug('aao-admin');
+      if (adminGroup) {
+        if (workosUserId) {
+          isAdmin = await wgDb.isMember(adminGroup.id, workosUserId);
+        } else if (slackUserId) {
+          const mapping = await slackDb.getBySlackUserId(slackUserId);
+          if (mapping?.workos_user_id) {
+            isAdmin = await wgDb.isMember(adminGroup.id, mapping.workos_user_id);
+          }
+        }
+      }
+
+      if (group.is_private && !isAdmin) {
+        response += `_Member list is only available to admins for private groups._\n`;
+      } else {
+        const pool = getPool();
+        const membersResult = await pool.query<{
+          user_name: string | null;
+          user_email: string | null;
+          user_org_name: string | null;
+        }>(
+          `SELECT wgm.user_name, wgm.user_email, wgm.user_org_name
+           FROM working_group_memberships wgm
+           JOIN working_groups wg ON wg.id = wgm.working_group_id
+           WHERE wg.slug = $1 AND wgm.status = 'active'
+           ORDER BY wgm.user_name ASC`,
+          [slug]
+        );
+
+        response += `### Members\n`;
+        if (membersResult.rows.length === 0) {
+          response += `_No active members._\n`;
+        } else {
+          for (const member of membersResult.rows) {
+            const name = member.user_name || member.user_email || 'Unknown';
+            const org = member.user_org_name ? ` (${member.user_org_name})` : '';
+            const email = member.user_email ? ` — ${member.user_email}` : '';
+            response += `- ${name}${org}${email}\n`;
+          }
+        }
+        response += `\n`;
+      }
     }
 
     return response;
@@ -1820,7 +1893,8 @@ export function createMemberToolHandlers(
         };
       }>;
     };
-    const agent = capData?.agents?.[0];
+    const normalizedInput = agentUrl.replace(/\/$/, "");
+    const agent = capData?.agents?.find((a) => a.url.replace(/\/$/, "") === normalizedInput);
 
     // Step 2.5: Check if OAuth is required (from either health check or capabilities discovery)
     const requiresOAuth = healthCheckRequiresOAuth || agent?.capabilities?.oauth_required;
@@ -1976,36 +2050,38 @@ export function createMemberToolHandlers(
   // ============================================
   handlers.set('test_adcp_agent', async (input) => {
     const agentUrl = input.agent_url as string;
-    const scenario = (input.scenario as TestScenario) || 'discovery';
+    const scenarios = input.scenarios as TestScenario[] | undefined;
     const brief = input.brief as string | undefined;
     const budget = input.budget as number | undefined;
     const dryRun = input.dry_run as boolean | undefined;
     const channels = input.channels as string[] | undefined;
     const pricingModels = input.pricing_models as string[] | undefined;
-    const brandManifest = input.brand_manifest as TestOptions['brand_manifest'];
+    const brandManifest = input.brand_manifest as OrchestratorOptions['brand_manifest'];
     let authToken = input.auth_token as string | undefined;
 
     // Look up saved token for organization
     let usingSavedToken = false;
     let usingSavedOAuthToken = false;
     let usingPublicTestAgent = false;
+    let savedAuthType: 'bearer' | 'basic' = 'bearer';
     const organizationId = memberContext?.organization?.workos_organization_id;
 
     if (!authToken && organizationId) {
-      // First, try to get a saved bearer token
+      // First, try to get a saved auth token (bearer or basic)
       try {
-        const savedToken = await agentContextDb.getAuthTokenByOrgAndUrl(
+        const savedInfo = await agentContextDb.getAuthInfoByOrgAndUrl(
           organizationId,
           agentUrl
         );
-        if (savedToken) {
-          authToken = savedToken;
+        if (savedInfo) {
+          authToken = savedInfo.token;
+          savedAuthType = savedInfo.authType;
           usingSavedToken = true;
-          logger.info({ agentUrl }, 'Using saved auth token for agent test');
+          logger.info({ agentUrl, authType: savedInfo.authType }, 'Using saved auth token for agent test');
         }
       } catch (error) {
         // Non-fatal - continue without saved token
-        logger.debug({ error, agentUrl }, 'Could not lookup saved bearer token');
+        logger.debug({ error, agentUrl }, 'Could not lookup saved auth token');
       }
 
       // If no bearer token, try OAuth tokens
@@ -2049,7 +2125,7 @@ export function createMemberToolHandlers(
       url: 'https://nike.com',
     };
 
-    const options: TestOptions = {
+    const options: OrchestratorOptions = {
       test_session_id: `addie-test-${Date.now()}`,
       dry_run: dryRun, // undefined means default to true
       brand_manifest: brandManifest || defaultBrandManifest,
@@ -2058,44 +2134,67 @@ export function createMemberToolHandlers(
     if (budget) options.budget = budget;
     if (channels) options.channels = channels;
     if (pricingModels) options.pricing_models = pricingModels;
-    if (authToken) options.auth = { type: 'bearer', token: authToken };
+    if (authToken) {
+      if (usingSavedToken && savedAuthType === 'basic') {
+        // Decode stored base64 credential back to username:password for the SDK
+        const decoded = Buffer.from(authToken, 'base64').toString();
+        const colonIndex = decoded.indexOf(':');
+        if (colonIndex >= 0) {
+          options.auth = {
+            type: 'basic',
+            username: decoded.substring(0, colonIndex),
+            password: decoded.substring(colonIndex + 1),
+          } as unknown as typeof options.auth;
+        } else {
+          logger.warn({ agentUrl }, 'Basic auth credential missing colon separator, falling back to Bearer');
+          options.auth = { type: 'bearer', token: authToken };
+        }
+      } else {
+        options.auth = { type: 'bearer', token: authToken };
+      }
+    }
+    if (scenarios) options.scenarios = scenarios;
 
     try {
-      const result = await runAgentTests(agentUrl, scenario, options);
+      const suite: SuiteResult = await testAllScenarios(agentUrl, options);
 
-      // If user is authenticated and agent test succeeded, update the saved context
+      // If user is authenticated, update the saved context
       if (organizationId) {
         try {
           const context = await agentContextDb.getByOrgAndUrl(
             organizationId,
             agentUrl
           );
-          if (context && result.agent_profile) {
-            // Update with discovered tools and test results
-            const tools = result.agent_profile.tools || [];
+          if (context) {
+            const tools = suite.agent_profile.tools || [];
+
+            // Record one history entry per scenario (each call also stomps last_test_* fields)
+            for (const result of suite.results) {
+              await agentContextDb.recordTest({
+                agent_context_id: context.id,
+                scenario: result.scenario,
+                overall_passed: result.overall_passed,
+                steps_passed: result.steps.filter((s) => s.passed).length,
+                steps_failed: result.steps.filter((s) => !s.passed).length,
+                total_duration_ms: result.total_duration_ms,
+                summary: result.summary,
+                dry_run: options.dry_run !== false,
+                brief: options.brief,
+                triggered_by: 'user',
+                user_id: memberContext?.workos_user?.workos_user_id,
+                steps_json: result.steps,
+                agent_profile_json: result.agent_profile,
+              });
+            }
+
+            // Overwrite with suite-level summary after the loop
+            // (recordTest updates last_test_* per-scenario; this restores the aggregate)
             await agentContextDb.update(context.id, {
               tools_discovered: tools,
               agent_type: agentContextDb.inferAgentType(tools),
-              last_test_scenario: scenario,
-              last_test_passed: result.overall_passed,
-              last_test_summary: result.summary,
-            });
-
-            // Record test history
-            await agentContextDb.recordTest({
-              agent_context_id: context.id,
-              scenario,
-              overall_passed: result.overall_passed,
-              steps_passed: result.steps.filter((s) => s.passed).length,
-              steps_failed: result.steps.filter((s) => !s.passed).length,
-              total_duration_ms: result.total_duration_ms,
-              summary: result.summary,
-              dry_run: options.dry_run !== false,
-              brief: options.brief,
-              triggered_by: 'user',
-              user_id: memberContext?.workos_user?.workos_user_id,
-              steps_json: result.steps,
-              agent_profile_json: result.agent_profile,
+              last_test_scenario: suite.scenarios_run.join(','),
+              last_test_passed: suite.overall_passed,
+              last_test_summary: `${suite.passed_count}/${suite.results.length} scenarios passed`,
             });
           }
         } catch (error) {
@@ -2104,7 +2203,7 @@ export function createMemberToolHandlers(
         }
       }
 
-      let output = formatTestResults(result);
+      let output = formatSuiteResults(suite);
       if (usingSavedToken) {
         output = `_Using saved credentials for this agent._\n\n` + output;
       } else if (usingSavedOAuthToken) {
@@ -2114,7 +2213,7 @@ export function createMemberToolHandlers(
       }
 
       // If tests failed, offer to help file a GitHub issue
-      const failedSteps = result.steps.filter((s) => !s.passed);
+      const failedSteps = suite.results.flatMap((r) => r.steps.filter((s) => !s.passed));
       if (failedSteps.length > 0) {
         // First, check if this looks like a bug in the @adcp/client testing library itself
         const clientLibraryBug = detectClientLibraryBug(failedSteps);
@@ -2144,7 +2243,7 @@ export function createMemberToolHandlers(
 
       return output;
     } catch (error) {
-      logger.error({ error, agentUrl, scenario }, 'Addie: test_adcp_agent failed');
+      logger.error({ error, agentUrl, scenarios }, 'Addie: test_adcp_agent failed');
       return `Failed to test agent ${agentUrl}: ${error instanceof Error ? error.message : 'Unknown error'}`;
     }
   });
@@ -2226,6 +2325,8 @@ export function createMemberToolHandlers(
     const agentUrl = input.agent_url as string;
     const agentName = input.agent_name as string | undefined;
     const authToken = input.auth_token as string | undefined;
+    const rawAuthType = input.auth_type as string | undefined;
+    const authType: 'bearer' | 'basic' = rawAuthType === 'basic' ? 'basic' : 'bearer';
     const protocol = (input.protocol as 'mcp' | 'a2a') || 'mcp';
 
     try {
@@ -2238,14 +2339,15 @@ export function createMemberToolHandlers(
           await agentContextDb.update(context.id, { agent_name: agentName, protocol });
         }
         if (authToken) {
-          await agentContextDb.saveAuthToken(context.id, authToken);
+          await agentContextDb.saveAuthToken(context.id, authToken, authType);
         }
         // Refresh context
         context = await agentContextDb.getById(context.id);
 
         let response = `✅ Updated saved agent: **${context?.agent_name || agentUrl}**\n\n`;
         if (authToken) {
-          response += `🔐 Auth token saved securely (hint: ${context?.auth_token_hint})\n`;
+          const typeLabel = authType === 'basic' ? 'Basic' : 'Bearer';
+          response += `🔐 ${typeLabel} auth token saved securely (hint: ${context?.auth_token_hint})\n`;
           response += `_The token is encrypted and will never be shown again._\n`;
         }
         return response;
@@ -2262,7 +2364,7 @@ export function createMemberToolHandlers(
 
       // Save auth token if provided
       if (authToken) {
-        await agentContextDb.saveAuthToken(context.id, authToken);
+        await agentContextDb.saveAuthToken(context.id, authToken, authType);
         context = await agentContextDb.getById(context.id);
       }
 
@@ -2270,7 +2372,8 @@ export function createMemberToolHandlers(
       response += `**URL:** ${agentUrl}\n`;
       response += `**Protocol:** ${protocol.toUpperCase()}\n`;
       if (authToken) {
-        response += `\n🔐 Auth token saved securely (hint: ${context?.auth_token_hint})\n`;
+        const typeLabel = authType === 'basic' ? 'Basic' : 'Bearer';
+        response += `\n🔐 ${typeLabel} auth token saved securely (hint: ${context?.auth_token_hint})\n`;
         response += `_The token is encrypted and will never be shown again._\n`;
       }
       response += `\nWhen you test this agent, I'll automatically use the saved credentials.`;
@@ -2305,7 +2408,8 @@ export function createMemberToolHandlers(
       for (const agent of agents) {
         const name = agent.agent_name || 'Unnamed Agent';
         const type = agent.agent_type !== 'unknown' ? ` (${agent.agent_type})` : '';
-        const hasToken = agent.has_auth_token ? `🔐 ${agent.auth_token_hint}` : '🔓 No token';
+        const authTypeLabel = agent.auth_type === 'basic' ? 'Basic' : 'Bearer';
+        const hasToken = agent.has_auth_token ? `🔐 ${authTypeLabel} ${agent.auth_token_hint}` : '🔓 No token';
 
         response += `### ${name}${type}\n`;
         response += `**URL:** ${agent.agent_url}\n`;
@@ -2797,6 +2901,81 @@ export function createMemberToolHandlers(
     } catch (error) {
       logger.error({ error, slackUserId }, 'Addie: Error setting outreach preference');
       return '❌ Failed to update outreach preference. Please try again.';
+    }
+  });
+
+  // ============================================
+  // MEMBER ENGAGEMENT
+  // ============================================
+  handlers.set('get_member_engagement', async () => {
+    if (!memberContext?.workos_user?.workos_user_id) {
+      return 'You need to be logged in to view your engagement data. Please log in at https://agenticadvertising.org/dashboard first.';
+    }
+
+    const orgId = memberContext.organization?.workos_organization_id;
+    if (!orgId) {
+      return 'Your account is not yet associated with a member organization. Visit https://agenticadvertising.org/membership to learn about joining.';
+    }
+
+    try {
+      const [orgData, milestones, signals, recommendedGroups] = await Promise.all([
+        query<{
+          journey_stage: string | null;
+          engagement_score: number | null;
+          persona: string | null;
+          persona_source: string | null;
+          aspiration_persona: string | null;
+        }>(
+          `SELECT journey_stage, engagement_score, persona, persona_source, aspiration_persona
+           FROM organizations WHERE workos_organization_id = $1`,
+          [orgId]
+        ).then(r => r.rows[0] ?? null).catch(() => null),
+
+        checkMilestones(orgId).catch(() => null),
+
+        orgDb.getEngagementSignals(orgId).catch(() => null),
+
+        getRecommendedGroupsForOrg(orgId, {
+          limit: 5,
+          excludeUserIds: memberContext.workos_user?.workos_user_id
+            ? [memberContext.workos_user.workos_user_id]
+            : [],
+        }).catch((): GroupRecommendation[] => []),
+      ]);
+
+
+      const STAGES = ['aware', 'evaluating', 'joined', 'onboarding', 'participating', 'contributing', 'leading', 'advocating'];
+      const stageIdx = orgData?.journey_stage ? STAGES.indexOf(orgData.journey_stage) : -1;
+      const nextStage = stageIdx >= 0 && stageIdx < STAGES.length - 1 ? STAGES[stageIdx + 1] : null;
+
+      const result = {
+        journey_stage: orgData?.journey_stage ?? null,
+        next_stage: nextStage,
+        engagement_score: orgData?.engagement_score ?? null,
+        persona: orgData?.persona ? PERSONA_LABELS[orgData.persona] ?? orgData.persona : null,
+        persona_key: orgData?.persona ?? null,
+        persona_source: orgData?.persona_source ?? null,
+        assessment_completed: orgData?.persona_source === 'diagnostic',
+        assessment_url: 'https://agenticadvertising.org/persona-assessment',
+        milestones: milestones ?? {},
+        activity: signals ? {
+          dashboard_logins_30d: signals.login_count_30d,
+          working_group_count: signals.working_group_count,
+          email_clicks_30d: signals.email_click_count_30d,
+        } : null,
+        recommended_groups: recommendedGroups.map(g => ({
+          name: g.name,
+          slug: g.slug,
+          reason: g.reason,
+          url: `https://agenticadvertising.org/working-groups/${g.slug}`,
+        })),
+        member_hub_url: 'https://agenticadvertising.org/member-hub',
+      };
+
+      return JSON.stringify(result, null, 2);
+    } catch (error) {
+      logger.error({ error, orgId }, 'Addie: get_member_engagement failed');
+      return 'Unable to load engagement data right now. Please try again.';
     }
   });
 

@@ -131,6 +131,27 @@ export const ResolvedBrandSchema = z
   })
   .openapi("ResolvedBrand");
 
+export const CompanySearchResultSchema = z
+  .object({
+    domain: z.string().openapi({ example: "coca-cola.com" }),
+    canonical_domain: z.string().openapi({ example: "coca-cola.com" }),
+    brand_name: z.string().openapi({ example: "The Coca-Cola Company" }),
+    house_domain: z.string().optional().openapi({ example: "coca-cola.com" }),
+    keller_type: z
+      .enum(["master", "sub_brand", "endorsed", "independent"])
+      .optional(),
+    parent_brand: z.string().optional(),
+    brand_agent_url: z.string().optional(),
+    source: z.string().openapi({ example: "community" }),
+  })
+  .openapi("CompanySearchResult");
+
+export const FindCompanyResultSchema = z
+  .object({
+    results: z.array(CompanySearchResultSchema),
+  })
+  .openapi("FindCompanyResult");
+
 export const ResolvedPropertySchema = z
   .object({
     publisher_domain: z.string().openapi({ example: "examplepub.com" }),
@@ -275,4 +296,30 @@ export const ValidationResultSchema = z
     raw_data: z.record(z.string(), z.unknown()).optional(),
   })
   .openapi("ValidationResult");
+
+const ActivityEntrySchema = z.object({
+  revision_number: z.number().int().openapi({ example: 3 }),
+  editor_name: z.string().openapi({ example: "Pinnacle Media" }),
+  edit_summary: z.string().openapi({ example: "Updated logo and brand colors" }),
+  source: z.string().optional().openapi({ description: "Source type of the record at the time of this revision (brand_json, enriched, community)" }),
+  is_rollback: z.boolean(),
+  rolled_back_to: z.number().int().optional().openapi({ description: "Revision number that was restored; only present when is_rollback is true" }),
+  created_at: z.string().openapi({ example: "2026-03-01T12:34:56Z" }),
+});
+
+export const BrandActivitySchema = z
+  .object({
+    domain: z.string().openapi({ example: "acmecorp.com" }),
+    total: z.number().int().openapi({ example: 3 }),
+    revisions: z.array(ActivityEntrySchema),
+  })
+  .openapi("BrandActivity");
+
+export const PropertyActivitySchema = z
+  .object({
+    domain: z.string().openapi({ example: "examplepub.com" }),
+    total: z.number().int().openapi({ example: 3 }),
+    revisions: z.array(ActivityEntrySchema),
+  })
+  .openapi("PropertyActivity");
 

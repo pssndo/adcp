@@ -19,7 +19,7 @@ Create a media buy, then pause it:
 
 <CodeGroup>
 
-```javascript JavaScript
+```javascript JavaScript test=false
 import { testAgent } from '@adcp/client/testing';
 import { CreateMediaBuyResponseSchema, UpdateMediaBuyResponseSchema } from '@adcp/client';
 
@@ -79,7 +79,7 @@ if ('errors' in updated && updated.errors) {
 console.log(`Campaign ${updated.media_buy_id} paused`);
 ```
 
-```python Python
+```python Python test=false
 import asyncio
 import time
 from datetime import datetime, timedelta
@@ -171,9 +171,14 @@ Configure automated delivery reporting for this media buy:
 | `budget` | number | Updated budget allocation |
 | `impressions` | number | Updated impression goal for this package |
 | `pacing` | string | Updated pacing strategy |
-| `bid_price` | number | Updated bid price (auction products only) |
-| `optimization_goal` | OptimizationGoal | Updated conversion optimization goal (event source, event type, target ROAS/CPA) |
+| `bid_price` | number | Updated bid price (auction products only). This is the exact bid/price to honor unless the selected pricing option has `max_bid: true`, in which case it is treated as the buyer's maximum willingness to pay (ceiling). |
+| `optimization_goals` | OptimizationGoal[] | Replace all optimization goals for this package. Uses replacement semantics — omit to leave goals unchanged. |
 | `targeting_overlay` | TargetingOverlay | Updated targeting restrictions |
+| `catalogs` | Catalog[] | Replace the catalogs this package promotes. Uses replacement semantics — omit to leave unchanged. |
+| `keyword_targets_add` | KeywordTarget[] | Keyword targets to add or upsert by (keyword, match_type) identity. On create, these are set as `keyword_targets` inside `targeting_overlay`. |
+| `keyword_targets_remove` | KeywordTarget[] | Keyword targets to remove by (keyword, match_type) identity. |
+| `negative_keywords_add` | NegativeKeyword[] | Negative keywords to append to this package. On create, these are set as `negative_keywords` inside `targeting_overlay`. |
+| `negative_keywords_remove` | NegativeKeyword[] | Negative keywords to remove from this package. |
 | `creative_assignments` | CreativeAssignment[] | Replace assigned creatives with optional weights and placement targeting |
 | `creatives` | CreativeAsset[] | Upload and assign new creatives inline (must not exist in library) |
 
@@ -546,6 +551,7 @@ asyncio.run(update_multiple_packages())
 - Targeting overlays
 - Creative assignments
 - Package status (active/paused)
+- Catalog reference (replace the catalog a catalog-driven package promotes)
 
 ❌ **Cannot update:**
 - Package ID
@@ -589,14 +595,21 @@ Some updates require seller approval and return pending status:
 - **Targeting changes** that alter campaign scope
 - **Creative changes** requiring policy review
 
-When approval is needed, `implementation_date` will be `null`:
+When approval is needed, `implementation_date` will be `null` and `affected_packages` contains the proposed state of each package that would be modified:
 
 ```json
 {
   "media_buy_id": "mb_12345",
   "buyer_ref": "summer_campaign_2025",
   "implementation_date": null,
-  "affected_packages": []
+  "affected_packages": [
+    {
+      "package_id": "pkg_abc123",
+      "buyer_ref": "ctv_package",
+      "budget": 50000,
+      "status": "pending_activation"
+    }
+  ]
 }
 ```
 
@@ -634,13 +647,30 @@ Updates may be asynchronous, especially with seller approval.
 
 ### Response Patterns
 
-**Synchronous (completed immediately)**:
+**Synchronous (completed immediately)** — campaign-level update (e.g., `paused: true`):
 ```json
 {
   "media_buy_id": "mb_12345",
   "buyer_ref": "summer_campaign_2025",
   "implementation_date": "2025-06-15T10:00:00Z",
   "affected_packages": []
+}
+```
+
+**Synchronous (completed immediately)** — package-level update:
+```json
+{
+  "media_buy_id": "mb_12345",
+  "buyer_ref": "summer_campaign_2025",
+  "implementation_date": "2025-06-15T10:00:00Z",
+  "affected_packages": [
+    {
+      "package_id": "pkg_abc123",
+      "buyer_ref": "ctv_package",
+      "budget": 50000,
+      "status": "active"
+    }
+  ]
 }
 ```
 

@@ -250,14 +250,14 @@ export const TOOL_SETS: Record<string, ToolSet> = {
 
   admin: {
     name: 'admin',
-    description: 'Administrative operations - manage prospects, organizations, feeds, escalations, user roles, insights (admin only)',
+    description: 'Administrative operations - manage prospects, organizations, feeds, escalations, user roles, member insights and engagement analytics, community-wide engagement ranking (admin only)',
     tools: [
       'list_pending_invoices',
       'get_account',
       'add_prospect',
       'update_prospect',
       'enrich_company',
-      'list_prospects',
+      'query_prospects',
       'prospect_search_lusha',
       'search_industry_feeds',
       'add_industry_feed',
@@ -282,10 +282,8 @@ export const TOOL_SETS: Record<string, ToolSet> = {
       'update_org_member_role',
       'list_escalations',
       'resolve_escalation',
-      'my_engaged_prospects',
-      'my_followups_needed',
-      'unassigned_prospects',
       'claim_prospect',
+      'triage_prospect_domain',
       'suggest_prospects',
       'set_reminder',
       'my_upcoming_tasks',
@@ -293,6 +291,7 @@ export const TOOL_SETS: Record<string, ToolSet> = {
       'get_insight_summary',
       'get_member_search_analytics',
       'list_organizations_by_users',
+      'list_users_by_engagement',
       'list_slack_users_by_org',
       'list_paying_members',
       'tag_insight',
@@ -376,9 +375,9 @@ export function buildUnavailableSetsHint(selectedSets: string[], isAAOAdmin: boo
   });
 
   return `
-## Tool Sets Not Currently Loaded
+## Capabilities Not Available in This Conversation
 
-Based on the user's request, the following tool categories were not loaded. If the user's request actually needs these capabilities, suggest they clarify their intent:
+The following capabilities are not available right now. If the user asks for something in these areas, explain what you can't help with in plain, natural language and suggest an alternative (e.g., direct them to the right person, page, or channel). Do NOT use technical terms like "tool sets", "not loaded", or "tool categories" — describe capabilities naturally (e.g., "I don't have access to scheduling features right now" rather than "meeting tools aren't loaded").
 
 ${hints.join('\n')}
 `;

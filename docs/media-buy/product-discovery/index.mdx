@@ -23,7 +23,7 @@ Start with a natural language description of your campaign objectives:
 *"Mike's Plumbing Services needs to reach homeowners in the Denver, Colorado area who might need plumbing services. We have $8,000 USD to spend from October 15-31, 2024. Looking for display and native formats to drive phone calls."*
 
 ### 2. Discover Products  
-Use [`get_products`](/docs/media-buy/task-reference/get_products) to find matching inventory based on your brief and promoted offering.
+Use [`get_products`](/docs/media-buy/task-reference/get_products) to find matching inventory based on your brief and brand.
 
 ### 3. Evaluate Results
 Review returned products for:
@@ -34,7 +34,7 @@ Review returned products for:
 - **Delivery forecasts** on proposals to estimate expected impressions, reach, and spend
 
 ### 4. Refine and Iterate
-Adjust your brief or add structured filters to find the perfect inventory match.
+Use `buying_mode: "refine"` with the `refine` array of change requests to iterate on products and proposals — include, omit, or find similar products, and request adjustments to proposals before committing to a buy. See [Refinement](/docs/media-buy/product-discovery/refinement).
 
 ### 5. Work with Proposals
 Publishers may return **proposals** alongside products—structured media plans with budget allocations that can be executed directly. See [Proposals](/docs/media-buy/product-discovery/media-products#proposals).
@@ -62,6 +62,9 @@ Products represent sellable advertising inventory with:
 - **Delivery characteristics** (guaranteed reach vs best-effort)
 
 Understand the complete product structure in [Media Products](/docs/media-buy/product-discovery/media-products).
+
+### Catalog-driven discovery
+For catalog-driven campaigns (retail media, job boards, travel), pass a `catalog` on `get_products` to find products that match your catalog items. Products declare which catalog types they support via `catalog_types`, and the response includes `catalog_match` with matched item counts. See [Catalogs](/docs/creative/catalogs#catalogs-in-the-media-buy-lifecycle).
 
 ### Format Discovery Integration
 Product discovery works hand-in-hand with creative planning:
@@ -93,8 +96,8 @@ Explore comprehensive examples in [Example Briefs](/docs/media-buy/product-disco
 ### Iterative Discovery
 - Start with a broad brief to explore available inventory
 - Use structured filters to narrow results by delivery type or pricing
+- [Refine](/docs/media-buy/product-discovery/refinement) specific products with the `refine` array before committing
 - Experiment with different customer descriptions to find new opportunities
-- Save successful brief patterns for future campaigns
 
 ### Working with Results
 - Review all returned products for unexpected opportunities
@@ -120,5 +123,6 @@ After discovering products:
 - **[Brief Expectations](/docs/media-buy/product-discovery/brief-expectations)** - Comprehensive guide to brief structure
 - **[Example Briefs](/docs/media-buy/product-discovery/example-briefs)** - Real-world campaign brief patterns
 - **[Media Products](/docs/media-buy/product-discovery/media-products)** - Understanding product model and attributes
+- **[Refinement](/docs/media-buy/product-discovery/refinement)** - Iterating on products and proposals with change requests
 - **[Proposals](/docs/media-buy/product-discovery/media-products#proposals)** - Structured media plans with budget allocations
 - **[`get_products` Task](/docs/media-buy/task-reference/get_products)** - Complete API reference

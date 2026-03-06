@@ -19,11 +19,16 @@
         },
         "asset_role": {
           "type": "string",
-          "description": "Optional descriptive label for this asset's purpose (e.g., 'hero_image', 'logo', 'third_party_tracking'). Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only."
+          "description": "Descriptive label for this asset's purpose (e.g., 'hero_image', 'logo', 'third_party_tracking'). For documentation and UI display only — manifests key assets by asset_id, not asset_role."
         },
         "required": {
           "type": "boolean",
           "description": "Whether this asset is required (true) or optional (false). Required assets must be provided for a valid creative. Optional assets enhance the creative but are not mandatory."
+        },
+        "overlays": {
+          "type": "array",
+          "description": "Publisher-controlled elements rendered on top of buyer content at this asset's position (e.g., video player controls, publisher logos). Creative agents should avoid placing critical content (CTAs, logos, key copy) within overlay bounds.",
+          "items": { "$ref": "/schemas/core/overlay.json" }
         }
       },
       "required": ["item_type", "asset_id", "asset_type", "required"]
@@ -37,12 +42,17 @@
         },
         "asset_role": {
           "type": "string",
-          "description": "Optional descriptive label for this asset's purpose. Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only."
+          "description": "Descriptive label for this asset's purpose. For documentation and UI display only — manifests key assets by asset_id, not asset_role."
         },
         "required": {
           "type": "boolean",
           "description": "Whether this asset is required within each repetition of the group",
           "default": false
+        },
+        "overlays": {
+          "type": "array",
+          "description": "Publisher-controlled elements rendered on top of buyer content at this asset's position (e.g., carousel navigation arrows, slide indicators). Creative agents should avoid placing critical content within overlay bounds.",
+          "items": { "$ref": "/schemas/core/overlay.json" }
         }
       },
       "required": ["asset_id", "asset_type", "required"]
@@ -279,15 +289,6 @@
             }
           },
           {
-            "description": "Promoted offerings asset",
-            "allOf": [{ "$ref": "#/$defs/baseIndividualAsset" }],
-            "properties": {
-              "item_type": { "const": "individual" },
-              "asset_type": { "const": "promoted_offerings" },
-              "requirements": { "$ref": "/schemas/core/requirements/promoted-offerings-asset-requirements.json" }
-            }
-          },
-          {
             "description": "URL asset",
             "allOf": [{ "$ref": "#/$defs/baseIndividualAsset" }],
             "properties": {
@@ -303,6 +304,23 @@
               "item_type": { "const": "individual" },
               "asset_type": { "const": "webhook" },
               "requirements": { "$ref": "/schemas/core/requirements/webhook-asset-requirements.json" }
+            }
+          },
+          {
+            "description": "Brief asset",
+            "allOf": [{ "$ref": "#/$defs/baseIndividualAsset" }],
+            "properties": {
+              "item_type": { "const": "individual" },
+              "asset_type": { "const": "brief" }
+            }
+          },
+          {
+            "description": "Catalog asset",
+            "allOf": [{ "$ref": "#/$defs/baseIndividualAsset" }],
+            "properties": {
+              "item_type": { "const": "individual" },
+              "asset_type": { "const": "catalog" },
+              "requirements": { "$ref": "/schemas/core/requirements/catalog-requirements.json" }
             }
           },
           {
@@ -427,14 +445,6 @@
                       }
                     },
                     {
-                      "description": "Promoted offerings asset in group",
-                      "allOf": [{ "$ref": "#/$defs/baseGroupAsset" }],
-                      "properties": {
-                        "asset_type": { "const": "promoted_offerings" },
-                        "requirements": { "$ref": "/schemas/core/requirements/promoted-offerings-asset-requirements.json" }
-                      }
-                    },
-                    {
                       "description": "URL asset in group",
                       "allOf": [{ "$ref": "#/$defs/baseGroupAsset" }],
                       "properties": {
@@ -522,6 +532,15 @@
         }
       },
       "required": ["wcag_level"]
+    },
+    "supported_disclosure_positions": {
+      "type": "array",
+      "description": "Disclosure positions this format can render. Buyers use this to determine whether a format can satisfy their compliance requirements before submitting a creative. When omitted, the format makes no disclosure rendering guarantees — creative agents SHOULD treat this as incompatible with briefs that require specific disclosure positions. Values correspond to positions on creative-brief.json required_disclosures.",
+      "items": {
+        "$ref": "/schemas/enums/disclosure-position.json"
+      },
+      "minItems": 1,
+      "uniqueItems": true
     },
     "format_card_detailed": {
       "type": "object",

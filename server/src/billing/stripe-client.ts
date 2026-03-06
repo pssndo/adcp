@@ -999,6 +999,72 @@ export async function createAndSendInvoice(
 }
 
 /**
+ * Validate invoice details and return a preview without creating any Stripe resources.
+ * Use this to show the customer the amount and billing email before committing.
+ * Call createAndSendInvoice after confirmation to actually create and send.
+ */
+export async function validateInvoiceDetails(data: {
+  lookupKey: string;
+  contactEmail: string;
+  couponId?: string;
+}): Promise<{
+  amountDue: number;
+  currency: string;
+  productName: string;
+  discountApplied: boolean;
+  discountWarning?: string;
+} | null> {
+  if (!stripe) {
+    logger.warn('validateInvoiceDetails: Stripe not initialized');
+    return null;
+  }
+
+  const priceId = await getPriceByLookupKey(data.lookupKey);
+  if (!priceId) {
+    logger.error({ lookupKey: data.lookupKey }, 'validateInvoiceDetails: No price found');
+    return null;
+  }
+
+  try {
+    const price = await stripe.prices.retrieve(priceId, { expand: ['product'] });
+    if (!price || price.unit_amount === null || price.unit_amount === 0) {
+      logger.error({ priceId, lookupKey: data.lookupKey }, 'validateInvoiceDetails: Price has zero or null amount');
+      return null;
+    }
+
+    let discountApplied = false;
+    let discountWarning: string | undefined;
+    if (data.couponId) {
+      try {
+        const coupon = await stripe.coupons.retrieve(data.couponId);
+        if (!coupon || !coupon.valid) {
+          discountWarning = `Coupon "${data.couponId}" is invalid or expired. Invoice will be sent without discount.`;
+        } else {
+          discountApplied = true;
+        }
+      } catch {
+        discountWarning = `Coupon "${data.couponId}" does not exist in Stripe. Invoice will be sent without discount.`;
+      }
+    }
+
+    const productName = typeof price.product === 'object' && price.product && 'name' in price.product
+      ? (price.product as { name: string }).name
+      : data.lookupKey;
+
+    return {
+      amountDue: price.unit_amount,
+      currency: price.currency,
+      productName,
+      discountApplied,
+      discountWarning,
+    };
+  } catch (error) {
+    logger.error({ err: error, lookupKey: data.lookupKey }, 'validateInvoiceDetails: Error');
+    return null;
+  }
+}
+
+/**
  * Resend an existing open invoice to the customer's billing email
  */
 export async function resendInvoice(invoiceId: string): Promise<{
@@ -1377,6 +1443,7 @@ export async function archiveProduct(productId: string, priceId: string): Promis
 export interface PendingInvoice {
   id: string;
   status: 'draft' | 'open';
+  is_past_due: boolean;
   amount_due: number;
   currency: string;
   created: Date;
@@ -1427,6 +1494,7 @@ export async function getPendingInvoices(customerId: string): Promise<PendingInv
       }
     }
     const allInvoices = Array.from(invoiceMap.values());
+    const now = new Date();
 
     for (const invoice of allInvoices) {
       // Get product name from first line item
@@ -1454,13 +1522,15 @@ export async function getPendingInvoices(customerId: string): Promise<PendingInv
         }
       }
 
+      const dueDate = invoice.due_date ? new Date(invoice.due_date * 1000) : null;
       pendingInvoices.push({
         id: invoice.id,
         status: invoice.status as 'draft' | 'open',
+        is_past_due: invoice.status === 'open' && dueDate !== null && dueDate < now,
         amount_due: invoice.amount_due,
         currency: invoice.currency,
         created: new Date(invoice.created * 1000),
-        due_date: invoice.due_date ? new Date(invoice.due_date * 1000) : null,
+        due_date: dueDate,
         hosted_invoice_url: invoice.hosted_invoice_url || null,
         product_name: productName,
         customer_email: typeof invoice.customer_email === 'string' ? invoice.customer_email : null,
@@ -1510,6 +1580,7 @@ export async function getPendingInvoicesByEmail(email: string): Promise<PendingI
 export interface OpenInvoiceWithCustomer {
   id: string;
   status: 'draft' | 'open';
+  is_past_due: boolean;
   amount_due: number;
   currency: string;
   created: Date;
@@ -1559,13 +1630,16 @@ function parseStripeInvoice(invoice: Stripe.Invoice): OpenInvoiceWithCustomer | 
     }
   }
 
+  const dueDate = invoice.due_date ? new Date(invoice.due_date * 1000) : null;
+  const status = (invoice.status === 'draft' || invoice.status === 'open') ? invoice.status : 'open';
   return {
     id: invoice.id,
-    status: (invoice.status === 'draft' || invoice.status === 'open') ? invoice.status : 'open',
+    status,
+    is_past_due: status === 'open' && dueDate !== null && dueDate < new Date(),
     amount_due: invoice.amount_due,
     currency: invoice.currency,
     created: new Date(invoice.created * 1000),
-    due_date: invoice.due_date ? new Date(invoice.due_date * 1000) : null,
+    due_date: dueDate,
     hosted_invoice_url: invoice.hosted_invoice_url || null,
     product_name: productName,
     customer_id: customerId,

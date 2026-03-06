@@ -4,7 +4,7 @@
   "title": "AdCP Asset Type Registry",
   "description": "Registry of asset types used in AdCP creative manifests. Each asset type defines the structure of actual content payloads (what you send), not requirements or constraints (which belong in format specifications).",
   "version": "1.0.0",
-  "lastUpdated": "2025-10-19",
+  "lastUpdated": "2026-02-28",
   "asset_types": {
     "image": {
       "description": "Static image asset (JPG, PNG, GIF, WebP, SVG)",
@@ -66,10 +66,15 @@
       "schema": "/schemas/core/assets/javascript-asset.json",
       "typical_use": "Third-party tags, custom interaction logic, analytics"
     },
-    "promoted_offerings": {
-      "description": "Brand manifest and product selectors for generative creative formats",
-      "schema": "/schemas/core/promoted-offerings.json",
-      "typical_use": "AI-generated creatives that need brand context and product information"
+    "brief": {
+      "description": "Campaign-level creative context (creative brief)",
+      "schema": "/schemas/core/assets/brief-asset.json",
+      "typical_use": "Campaign briefs with objective, messaging, compliance requirements"
+    },
+    "catalog": {
+      "description": "Typed data feed (products, stores, jobs, etc.)",
+      "schema": "/schemas/core/assets/catalog-asset.json",
+      "typical_use": "Product catalogs, store locators, job feeds for dynamic creatives"
     }
   },
   "architecture": {

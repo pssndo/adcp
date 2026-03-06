@@ -1,6 +1,6 @@
 ---
 title: log_event
-testable: true
+testable: false
 ---
 
 
@@ -8,8 +8,8 @@ Send conversion or marketing events for attribution and optimization. Supports b
 
 **Response Time**: ~1s (events are queued for processing)
 
-**Request Schema**: [`/schemas/v2/media-buy/log-event-request.json`](https://adcontextprotocol.org/schemas/v2/media-buy/log-event-request.json)
-**Response Schema**: [`/schemas/v2/media-buy/log-event-response.json`](https://adcontextprotocol.org/schemas/v2/media-buy/log-event-response.json)
+**Request Schema**: [`/schemas/v3/media-buy/log-event-request.json`](https://adcontextprotocol.org/schemas/v3/media-buy/log-event-request.json)
+**Response Schema**: [`/schemas/v3/media-buy/log-event-response.json`](https://adcontextprotocol.org/schemas/v3/media-buy/log-event-response.json)
 
 ## Quick Start
 
@@ -147,7 +147,7 @@ At least one of `uids`, `hashed_email`, `hashed_phone`, `click_id`, or `client_i
 | `value` | number | Monetary value of the event |
 | `currency` | string | ISO 4217 currency code (e.g. `USD`, `EUR`, `GBP`) |
 | `order_id` | string | Unique order or transaction identifier |
-| `content_ids` | string[] | Product or content identifiers |
+| `content_ids` | string[] | Product or content identifiers. For catalog-driven campaigns, these match the catalog's `content_id_type` (e.g., SKUs, GTINs, job IDs). See [catalog-item attribution](/docs/media-buy/conversion-tracking#catalog-item-attribution). |
 | `content_type` | string | Category of content (product, service, etc.) |
 | `num_items` | integer | Number of items in the event |
 | `contents` | Content[] | Per-item details (id, quantity, price, brand) |
@@ -504,7 +504,7 @@ Choose `event_id` values that are stable across retries:
 | `INVALID_EVENT_TIME` | Event time too far in the past/future | Use timestamps within the seller's attribution window |
 | `MISSING_USER_MATCH` | No user identifiers provided | Include at least one of: uids, hashed_email, hashed_phone, click_id, or client_ip + client_user_agent |
 | `BATCH_TOO_LARGE` | More than 10,000 events | Split into smaller batches |
-| `RATE_LIMIT_EXCEEDED` | Too many requests | Wait and retry with exponential backoff |
+| `RATE_LIMITED` | Too many requests | Wait and retry with exponential backoff |
 
 ## Best Practices
 

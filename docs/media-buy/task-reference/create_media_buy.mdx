@@ -41,7 +41,7 @@ const result = await testAgent.createMediaBuy({
     {
       buyer_ref: 'display_package_1',
       product_id: 'prod_d979b543',
-      pricing_option_id: 'cpm_usd_fixed',
+      pricing_option_id: 'cpm_usd_auction',
       format_ids: [
         {
           agent_url: 'https://creative.adcontextprotocol.org',
@@ -54,7 +54,7 @@ const result = await testAgent.createMediaBuy({
     {
       buyer_ref: 'display_package_2',
       product_id: 'prod_e8fd6012',
-      pricing_option_id: 'cpm_usd_fixed',
+      pricing_option_id: 'cpm_usd_auction',
       format_ids: [
         {
           agent_url: 'https://creative.adcontextprotocol.org',
@@ -108,7 +108,7 @@ async def create_campaign():
             {
                 'buyer_ref': 'ctv_package',
                 'product_id': 'prod_d979b543',
-                'pricing_option_id': 'cpm_usd_fixed',
+                'pricing_option_id': 'cpm_usd_auction',
                 'format_ids': [
                     {
                         'agent_url': 'https://creative.adcontextprotocol.org',
@@ -121,7 +121,7 @@ async def create_campaign():
             {
                 'buyer_ref': 'audio_package',
                 'product_id': 'prod_e8fd6012',
-                'pricing_option_id': 'cpm_usd_fixed',
+                'pricing_option_id': 'cpm_usd_auction',
                 'format_ids': [
                     {
                         'agent_url': 'https://creative.adcontextprotocol.org',
@@ -151,7 +151,7 @@ asyncio.run(create_campaign())
 npx adcp \
   https://test-agent.adcontextprotocol.org/mcp \
   create_media_buy \
-  '{"buyer_ref":"summer_campaign_2025","brand":{"domain":"acmecorp.com"},"packages":[{"buyer_ref":"display_package_1","product_id":"prod_d979b543","pricing_option_id":"cpm_usd_fixed","format_ids":[{"agent_url":"https://creative.adcontextprotocol.org","id":"display_300x250_image"}],"budget":30000,"bid_price":5.00},{"buyer_ref":"display_package_2","product_id":"prod_e8fd6012","pricing_option_id":"cpm_usd_fixed","format_ids":[{"agent_url":"https://creative.adcontextprotocol.org","id":"display_300x250_html"}],"budget":20000,"bid_price":4.50}],"start_time":"2025-06-01T00:00:00Z","end_time":"2025-08-31T23:59:59Z"}' \
+  '{"buyer_ref":"summer_campaign_2025","brand":{"domain":"acmecorp.com"},"packages":[{"buyer_ref":"display_package_1","product_id":"prod_d979b543","pricing_option_id":"cpm_usd_auction","format_ids":[{"agent_url":"https://creative.adcontextprotocol.org","id":"display_300x250_image"}],"budget":30000,"bid_price":5.00},{"buyer_ref":"display_package_2","product_id":"prod_e8fd6012","pricing_option_id":"cpm_usd_auction","format_ids":[{"agent_url":"https://creative.adcontextprotocol.org","id":"display_300x250_html"}],"budget":20000,"bid_price":4.50}],"start_time":"2025-06-01T00:00:00Z","end_time":"2025-08-31T23:59:59Z"}' \
   --auth 1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ
 ```
 
@@ -162,7 +162,8 @@ npx adcp \
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `buyer_ref` | string | Yes | Your reference identifier for this media buy |
-| `account_id` | string | No | Account to bill. Required when the agent has access to multiple accounts; the seller infers the account when only one exists. |
+| `buyer_campaign_ref` | string | No | Buyer's campaign label for CRM and ad server correlation (e.g., `"NovaDrink_Meals_Q2"`). Groups related discovery and buy operations. |
+| `account` | [account-ref](/docs/building/integration/accounts-and-agents#account-references) | Yes | Account reference. Pass `{ "account_id": "..." }` or `{ "brand": {...}, "operator": "..." }` if the seller supports implicit resolution. Required for billing and policy evaluation. |
 | `proposal_id` | string | No* | ID of a proposal from `get_products` to execute. Alternative to providing packages. |
 | `total_budget` | TotalBudget | No* | Total budget when executing a proposal. Publisher applies allocation percentages. |
 | `packages` | Package[] | No* | Array of package configurations (see below). Required when not using proposal_id. |
@@ -193,8 +194,8 @@ npx adcp \
 | `impressions` | number | No | Impression goal for this package |
 | `paused` | boolean | No | Create package in paused state (default: `false`) |
 | `pacing` | string | No | `"even"` (default), `"asap"`, or `"front_loaded"` |
-| `bid_price` | number | No | Bid price for auction pricing (required when pricing option has no `fixed_price`) |
-| `optimization_goal` | [OptimizationGoal](/docs/media-buy/conversion-tracking/#optimization-goals) | No | Conversion optimization goal - event source, event type, and optional target ROAS or CPA. Product must declare support in `conversion_tracking.supported_optimization_strategies`. |
+| `bid_price` | number | No | Bid price for auction pricing. This is the exact bid/price to honor unless the selected pricing option has `max_bid: true`, in which case it is treated as the buyer's maximum willingness to pay (ceiling). |
+| `optimization_goals` | [OptimizationGoal[]](/docs/media-buy/conversion-tracking/#optimization-goals) | No | Optimization targets for this package. Each goal is either `kind: "event"` (conversion events with `event_sources` array, optional `cost_per`, `per_ad_spend`, or `maximize_value` target) or `kind: "metric"` (seller-native metric with optional `cost_per` or `threshold_rate` target). Event goals require `conversion_tracking.supported_targets` on the product; metric goals require `metric_optimization.supported_metrics`. |
 | `targeting_overlay` | TargetingOverlay | No | Additional targeting criteria (see [Targeting](/docs/media-buy/advanced-topics/targeting)) |
 | `creative_assignments` | CreativeAssignment[] | No | Assign existing library creatives with optional weights and placement targeting |
 | `creatives` | CreativeAsset[] | No | Upload new creative assets and assign (`creative_id` must not already exist in library) |
@@ -207,6 +208,7 @@ npx adcp \
 |-------|-------------|
 | `media_buy_id` | Publisher's unique identifier |
 | `buyer_ref` | Your reference identifier |
+| `buyer_campaign_ref` | Buyer's campaign label (echoed from request) |
 | `creative_deadline` | ISO 8601 timestamp for creative upload deadline |
 | `packages` | Array of created packages with complete state |
 
@@ -226,7 +228,7 @@ Add geographic restrictions and frequency capping:
 
 <CodeGroup>
 
-```javascript JavaScript
+```javascript JavaScript test=false
 import { testAgent } from '@adcp/client/testing';
 import { CreateMediaBuyResponseSchema } from '@adcp/client';
 
@@ -242,7 +244,7 @@ const result = await testAgent.createMediaBuy({
   packages: [{
     buyer_ref: 'ctv_regional',
     product_id: 'prod_d979b543',
-    pricing_option_id: 'cpm_usd_fixed',
+    pricing_option_id: 'cpm_usd_auction',
     format_ids: [{
       agent_url: 'https://creative.adcontextprotocol.org',
       id: 'display_300x250_image'
@@ -253,7 +255,7 @@ const result = await testAgent.createMediaBuy({
       geo_countries: ['US'],
       geo_regions: ['US-CA', 'US-NY'],
       frequency_cap: {
-        suppress_minutes: 60
+        suppress: { interval: 60, unit: 'minutes' }
       }
     }
   }],
@@ -275,7 +277,7 @@ if ('media_buy_id' in validated) {
 }
 ```
 
-```python Python
+```python Python test=false
 import asyncio
 import time
 from datetime import datetime, timedelta, timezone
@@ -293,7 +295,7 @@ async def create_targeted_campaign():
         packages=[{
             'buyer_ref': 'ctv_regional',
             'product_id': 'prod_d979b543',
-            'pricing_option_id': 'cpm_usd_fixed',
+            'pricing_option_id': 'cpm_usd_auction',
             'format_ids': [{
                 'agent_url': 'https://creative.adcontextprotocol.org',
                 'id': 'display_300x250_image'
@@ -304,7 +306,7 @@ async def create_targeted_campaign():
                 'geo_countries': ['US'],
                 'geo_regions': ['US-CA', 'US-NY'],
                 'frequency_cap': {
-                    'suppress_minutes': 60
+                    'suppress': {'interval': 60, 'unit': 'minutes'}
                 }
             }
         }],
@@ -324,7 +326,7 @@ asyncio.run(create_targeted_campaign())
 
 ### Campaign with Conversion Optimization
 
-Set a ROAS target for conversion-optimized delivery. The product must declare support in `conversion_tracking.supported_optimization_strategies`, and you must have an event source configured via `sync_event_sources`:
+Set a per_ad_spend target for conversion-optimized delivery. The product must declare support in `conversion_tracking.supported_targets`, and you must have an event source configured via `sync_event_sources`:
 
 <CodeGroup>
 
@@ -346,11 +348,14 @@ const result = await testAgent.createMediaBuy({
     pricing_option_id: 'cpc_usd_auction',
     budget: 10000,
     bid_price: 1.20,
-    optimization_goal: {
-      event_source_id: 'retailer_sales',
-      event_type: 'purchase',
-      target_roas: 4.0
-    }
+    optimization_goals: [{
+      kind: 'event',
+      event_sources: [
+        { event_source_id: 'retailer_sales', event_type: 'purchase', value_field: 'value' }
+      ],
+      target: { kind: 'per_ad_spend', value: 4.0 },
+      priority: 1
+    }]
   }],
   start_time: 'asap',
   end_time: endDate.toISOString()
@@ -366,7 +371,7 @@ if ('errors' in validated && validated.errors) {
 }
 
 if ('media_buy_id' in validated) {
-  console.log(`Campaign ${validated.media_buy_id} created with ROAS target`);
+  console.log(`Campaign ${validated.media_buy_id} created with per_ad_spend target`);
 }
 ```
 
@@ -390,11 +395,14 @@ async def create_optimized_campaign():
             'pricing_option_id': 'cpc_usd_auction',
             'budget': 10000,
             'bid_price': 1.20,
-            'optimization_goal': {
-                'event_source_id': 'retailer_sales',
-                'event_type': 'purchase',
-                'target_roas': 4.0
-            }
+            'optimization_goals': [{
+                'kind': 'event',
+                'event_sources': [
+                    { 'event_source_id': 'retailer_sales', 'event_type': 'purchase', 'value_field': 'value' }
+                ],
+                'target': { 'kind': 'per_ad_spend', 'value': 4.0 },
+                'priority': 1
+            }]
         }],
         start_time='asap',
         end_time=end_date.isoformat().replace('+00:00', 'Z')
@@ -403,12 +411,71 @@ async def create_optimized_campaign():
     if hasattr(result, 'errors') and result.errors:
         raise Exception(f"Creation failed: {result.errors}")
 
-    print(f"Campaign {result.media_buy_id} created with ROAS target")
+    print(f"Campaign {result.media_buy_id} created with per_ad_spend target")
 
 asyncio.run(create_optimized_campaign())
 ```
 
 </CodeGroup>
+
+### Catalog-driven packages
+
+A catalog-driven package allocates a single budget envelope to an entire catalog of items. Instead of creating separate packages per item, the platform optimizes delivery across all catalog items based on performance. This is the AdCP equivalent of catalog-based campaign types such as Google Performance Max or Meta Dynamic Product Ads.
+
+Include the `catalogs` field in a package to make it catalog-driven. Each catalog should have a distinct type (e.g., one product catalog, one store catalog). The referenced catalogs must already be synced via [`sync_catalogs`](/docs/media-buy/task-reference/sync_catalogs).
+
+**Job campaign with synced job catalog:**
+
+```json test=false
+{
+  "buyer_ref": "recruitment_q1",
+  "brand": { "domain": "acme-restaurants.com" },
+  "packages": [{
+    "buyer_ref": "chef_vacancies",
+    "product_id": "prod_job_board",
+    "pricing_option_id": "cpc_eur_auction",
+    "budget": 5000,
+    "bid_price": 2.50,
+    "catalogs": [{
+      "catalog_id": "chef-vacancies",
+      "type": "job"
+    }]
+  }],
+  "start_time": "asap",
+  "end_time": "2026-06-30T23:59:59Z"
+}
+```
+
+**Retail media with product catalog and store catchment targeting:**
+
+```json test=false
+{
+  "buyer_ref": "summer_promo",
+  "brand": { "domain": "acmecorp.com" },
+  "packages": [{
+    "buyer_ref": "sponsored_products",
+    "product_id": "prod_retail_sp",
+    "pricing_option_id": "cpc_usd_auction",
+    "budget": 10000,
+    "bid_price": 1.20,
+    "catalogs": [{
+      "catalog_id": "gmc-primary",
+      "type": "product",
+      "tags": ["summer"]
+    }],
+    "targeting_overlay": {
+      "store_catchments": [{
+        "catalog_id": "retail-locations",
+        "catchment_ids": ["drive"]
+      }]
+    }
+  }],
+  "start_time": "asap",
+  "end_time": "2026-09-30T23:59:59Z"
+}
+```
+
+The platform distributes budget across catalog items based on performance. For per-item reporting, use [`get_media_buy_delivery`](/docs/media-buy/task-reference/get_media_buy_delivery) which returns `by_catalog_item` breakdowns. Creative variants for catalog-driven packages represent individual catalog items rendered as ads.
 
 ### Campaign with Inline Creatives
 
@@ -432,7 +499,7 @@ const result = await testAgent.createMediaBuy({
   packages: [{
     buyer_ref: 'ctv_package',
     product_id: 'prod_d979b543',
-    pricing_option_id: 'cpm_usd_fixed',
+    pricing_option_id: 'cpm_usd_auction',
     format_ids: [{
       agent_url: 'https://creative.adcontextprotocol.org',
       id: 'display_300x250_image'
@@ -491,7 +558,7 @@ async def create_with_creatives():
         packages=[{
             'buyer_ref': 'ctv_package',
             'product_id': 'prod_d979b543',
-            'pricing_option_id': 'cpm_usd_fixed',
+            'pricing_option_id': 'cpm_usd_auction',
             'format_ids': [{
                 'agent_url': 'https://creative.adcontextprotocol.org',
                 'id': 'display_300x250_image'
@@ -534,7 +601,7 @@ Receive automated reporting notifications:
 
 <CodeGroup>
 
-```javascript JavaScript
+```javascript JavaScript test=false
 import { testAgent } from '@adcp/client/testing';
 import { CreateMediaBuyResponseSchema } from '@adcp/client';
 
@@ -550,7 +617,7 @@ const result = await testAgent.createMediaBuy({
   packages: [{
     buyer_ref: 'ctv_package',
     product_id: 'prod_d979b543',
-    pricing_option_id: 'cpm_usd_fixed',
+    pricing_option_id: 'cpm_usd_auction',
     format_ids: [{
       agent_url: 'https://creative.adcontextprotocol.org',
       id: 'display_300x250_image'
@@ -585,7 +652,7 @@ if ('media_buy_id' in validated) {
 }
 ```
 
-```python Python
+```python Python test=false
 import asyncio
 import time
 from datetime import datetime, timedelta, timezone
@@ -603,7 +670,7 @@ async def create_with_reporting():
         packages=[{
             'buyer_ref': 'ctv_package',
             'product_id': 'prod_d979b543',
-            'pricing_option_id': 'cpm_usd_fixed',
+            'pricing_option_id': 'cpm_usd_auction',
             'format_ids': [{
                 'agent_url': 'https://creative.adcontextprotocol.org',
                 'id': 'display_300x250_image'

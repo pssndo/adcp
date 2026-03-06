@@ -21,7 +21,7 @@ describe('BrandManager caching', () => {
   describe('validateDomain caching', () => {
     it('caches successful validation results', async () => {
       const mockBrandJson = {
-        $schema: 'https://adcontextprotocol.org/schemas/v1/brand.json',
+        $schema: 'https://adcontextprotocol.org/schemas/latest/brand.json',
         version: '1.0',
         house: {
           domain: 'acme.com',
@@ -38,7 +38,7 @@ describe('BrandManager caching', () => {
 
       mockedAxios.get.mockResolvedValueOnce({
         status: 200,
-        data: mockBrandJson,
+        data: Buffer.from(JSON.stringify(mockBrandJson)),
       });
 
       // First call - should fetch
@@ -74,7 +74,7 @@ describe('BrandManager caching', () => {
 
     it('bypasses cache with skipCache option', async () => {
       const mockBrandJson = {
-        $schema: 'https://adcontextprotocol.org/schemas/v1/brand.json',
+        $schema: 'https://adcontextprotocol.org/schemas/latest/brand.json',
         version: '1.0',
         house: {
           domain: 'fresh.com',
@@ -91,7 +91,7 @@ describe('BrandManager caching', () => {
 
       mockedAxios.get.mockResolvedValue({
         status: 200,
-        data: mockBrandJson,
+        data: Buffer.from(JSON.stringify(mockBrandJson)),
       });
 
       // First call
@@ -104,10 +104,45 @@ describe('BrandManager caching', () => {
     });
   });
 
+  describe('UTF-8 encoding', () => {
+    it('preserves non-ASCII characters from brand.json', async () => {
+      const mockBrandJson = {
+        $schema: 'https://adcontextprotocol.org/schemas/latest/brand.json',
+        version: '1.0',
+        house: {
+          domain: 'marabou.se',
+          name: 'Marabou',
+        },
+        brands: [
+          {
+            id: 'marabou',
+            names: [{ sv: 'Marabou' }],
+            keller_type: 'master',
+            brand_manifest: {
+              description: 'Sveriges mest älskade choklad för alla smaker och tillfällen.',
+            },
+          },
+        ],
+      };
+
+      mockedAxios.get.mockResolvedValueOnce({
+        status: 200,
+        data: Buffer.from(JSON.stringify(mockBrandJson), 'utf-8'),
+      });
+
+      const result = await manager.validateDomain('marabou.se');
+      expect(result.valid).toBe(true);
+      const portfolio = result.raw_data as typeof mockBrandJson;
+      expect(portfolio.brands[0].brand_manifest.description).toBe(
+        'Sveriges mest älskade choklad för alla smaker och tillfällen.'
+      );
+    });
+  });
+
   describe('resolveBrand caching', () => {
     it('caches brand resolution results', async () => {
       const mockBrandJson = {
-        $schema: 'https://adcontextprotocol.org/schemas/v1/brand.json',
+        $schema: 'https://adcontextprotocol.org/schemas/latest/brand.json',
         version: '1.0',
         house: {
           domain: 'example.com',
@@ -124,7 +159,7 @@ describe('BrandManager caching', () => {
 
       mockedAxios.get.mockResolvedValue({
         status: 200,
-        data: mockBrandJson,
+        data: Buffer.from(JSON.stringify(mockBrandJson)),
       });
 
       // First call - should fetch
@@ -162,7 +197,7 @@ describe('BrandManager caching', () => {
 
     it('bypasses cache with skipCache option', async () => {
       const mockBrandJson = {
-        $schema: 'https://adcontextprotocol.org/schemas/v1/brand.json',
+        $schema: 'https://adcontextprotocol.org/schemas/latest/brand.json',
         version: '1.0',
         house: {
           domain: 'bypass.com',
@@ -179,7 +214,7 @@ describe('BrandManager caching', () => {
 
       mockedAxios.get.mockResolvedValue({
         status: 200,
-        data: mockBrandJson,
+        data: Buffer.from(JSON.stringify(mockBrandJson)),
       });
 
       // First call
@@ -196,7 +231,7 @@ describe('BrandManager caching', () => {
   describe('cache management', () => {
     it('getCacheStats returns correct counts', async () => {
       const mockBrandJson = {
-        $schema: 'https://adcontextprotocol.org/schemas/v1/brand.json',
+        $schema: 'https://adcontextprotocol.org/schemas/latest/brand.json',
         version: '1.0',
         house: {
           domain: 'stats.com',
@@ -213,7 +248,7 @@ describe('BrandManager caching', () => {
 
       mockedAxios.get.mockResolvedValue({
         status: 200,
-        data: mockBrandJson,
+        data: Buffer.from(JSON.stringify(mockBrandJson)),
       });
 
       // Initial state
@@ -235,7 +270,7 @@ describe('BrandManager caching', () => {
 
     it('clearCache clears all caches', async () => {
       const mockBrandJson = {
-        $schema: 'https://adcontextprotocol.org/schemas/v1/brand.json',
+        $schema: 'https://adcontextprotocol.org/schemas/latest/brand.json',
         version: '1.0',
         house: {
           domain: 'clear.com',
@@ -252,7 +287,7 @@ describe('BrandManager caching', () => {
 
       mockedAxios.get.mockResolvedValue({
         status: 200,
-        data: mockBrandJson,
+        data: Buffer.from(JSON.stringify(mockBrandJson)),
       });
 
       await manager.validateDomain('clear.com');

@@ -29,6 +29,9 @@ import {
   PublisherPropertySelectorSchema,
   PropertyIdentifierSchema,
   ErrorSchema,
+  FindCompanyResultSchema,
+  BrandActivitySchema,
+  PropertyActivitySchema,
 } from "../schemas/registry.js";
 
 import type { BrandManager } from "../brand-manager.js";
@@ -39,8 +42,13 @@ import type { HealthChecker } from "../health.js";
 import type { CrawlerService } from "../crawler.js";
 import type { CapabilityDiscovery } from "../capabilities.js";
 import { AAO_HOST, aaoHostedBrandJsonUrl } from "../config/aao.js";
+import { fetchBrandData, isBrandfetchConfigured, ENRICHMENT_CACHE_MAX_AGE_MS } from "../services/brandfetch.js";
+import { PropertyCheckService } from "../services/property-check.js";
+import { PropertyCheckDatabase } from "../db/property-check-db.js";
 
 const logger = createLogger("registry-api");
+const propertyCheckService = new PropertyCheckService();
+const propertyCheckDb = new PropertyCheckDatabase();
 
 // ── Config ──────────────────────────────────────────────────────
 
@@ -232,6 +240,27 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/api/brands/history",
+  operationId: "getBrandHistory",
+  summary: "Brand activity history",
+  description: "Returns the edit history for a brand in the registry, newest first. Only brands with community or enriched edits have history; brand.json-sourced brands are authoritative and do not generate revisions.",
+  tags: ["Brand Resolution"],
+  request: {
+    query: z.object({
+      domain: z.string().openapi({ example: "acmecorp.com" }),
+      limit: z.string().optional().openapi({ example: "20" }),
+      offset: z.string().optional().openapi({ example: "0" }),
+    }),
+  },
+  responses: {
+    200: { description: "Brand activity history", content: { "application/json": { schema: BrandActivitySchema } } },
+    400: { description: "domain parameter required", content: { "application/json": { schema: ErrorSchema } } },
+    404: { description: "Brand not found", content: { "application/json": { schema: z.object({ error: z.string(), domain: z.string() }) } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/api/brands/enrich",
   operationId: "enrichBrand",
   summary: "Enrich brand",
@@ -241,6 +270,27 @@ registry.registerPath({
   responses: {
     200: { description: "Enrichment data from Brandfetch", content: { "application/json": { schema: z.object({}).passthrough() } } },
     503: { description: "Brandfetch not configured", content: { "application/json": { schema: ErrorSchema } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/properties/history",
+  operationId: "getPropertyHistory",
+  summary: "Property activity history",
+  description: "Returns the edit history for a property in the registry, newest first.",
+  tags: ["Property Resolution"],
+  request: {
+    query: z.object({
+      domain: z.string().openapi({ example: "examplepub.com" }),
+      limit: z.string().optional().openapi({ example: "20" }),
+      offset: z.string().optional().openapi({ example: "0" }),
+    }),
+  },
+  responses: {
+    200: { description: "Property activity history", content: { "application/json": { schema: PropertyActivitySchema } } },
+    400: { description: "domain parameter required", content: { "application/json": { schema: ErrorSchema } } },
+    404: { description: "Property not found", content: { "application/json": { schema: z.object({ error: z.string(), domain: z.string() }) } } },
   },
 });
 
@@ -349,6 +399,59 @@ registry.registerPath({
     401: { description: "Authentication required", content: { "application/json": { schema: ErrorSchema } } },
     409: { description: "Cannot edit authoritative property", content: { "application/json": { schema: ErrorSchema } } },
     429: { description: "Rate limit exceeded", content: { "application/json": { schema: ErrorSchema } } },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/properties/check",
+  operationId: "checkPropertyList",
+  summary: "Check property list",
+  description:
+    "Check a list of publisher domains against the AAO registry. Normalizes domains (strips www/m prefixes), removes duplicates, flags known ad tech infrastructure, and identifies domains not yet in the registry.\n\nReturns four buckets:\n- **remove**: duplicates or known blocked domains (ad servers, CDNs, trackers, intermediaries)\n- **modify**: domains that were normalized (e.g. www.example.com → example.com)\n- **assess**: unknown domains not in registry, not blocked\n- **ok**: domains found in registry with no changes needed\n\nResults are stored for 7 days and retrievable via the `report_id`.",
+  tags: ["Property Resolution"],
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            domains: z.array(z.string()).max(10000).openapi({ example: ["www.nytimes.com", "googlesyndication.com", "wsj.com"] }),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      description: "Property list check results",
+      content: {
+        "application/json": {
+          schema: z.object({
+            summary: z.object({ total: z.number().int(), remove: z.number().int(), modify: z.number().int(), assess: z.number().int(), ok: z.number().int() }),
+            remove: z.array(z.object({ input: z.string(), canonical: z.string(), reason: z.enum(["duplicate", "blocked"]), domain_type: z.string().optional(), blocked_reason: z.string().optional() })),
+            modify: z.array(z.object({ input: z.string(), canonical: z.string(), reason: z.string() })),
+            assess: z.array(z.object({ domain: z.string() })),
+            ok: z.array(z.object({ domain: z.string(), source: z.string() })),
+            report_id: z.string().openapi({ description: "UUID for retrieving this report later" }),
+          }),
+        },
+      },
+    },
+    400: { description: "Invalid request", content: { "application/json": { schema: ErrorSchema } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/properties/check/{reportId}",
+  operationId: "getPropertyCheckReport",
+  summary: "Get property check report",
+  description: "Retrieve a previously stored property check report by ID. Reports expire after 7 days.",
+  tags: ["Property Resolution"],
+  request: { params: z.object({ reportId: z.string() }) },
+  responses: {
+    200: { description: "Property check report", content: { "application/json": { schema: z.object({ summary: z.object({ total: z.number().int(), remove: z.number().int(), modify: z.number().int(), assess: z.number().int(), ok: z.number().int() }) }) } } },
+    404: { description: "Report not found or expired", content: { "application/json": { schema: ErrorSchema } } },
   },
 });
 
@@ -753,6 +856,64 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
     }
   });
 
+  router.get("/brands/history", async (req, res) => {
+    try {
+      const domain = (req.query.domain as string)?.replace(/^https?:\/\//, "").replace(/[/?#].*$/, "").replace(/\/$/, "").toLowerCase();
+      if (!domain) {
+        return res.status(400).json({ error: "domain parameter required" });
+      }
+      const rawLimit = parseInt(req.query.limit as string, 10);
+      const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 20;
+      const rawOffset = parseInt(req.query.offset as string, 10);
+      const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+
+      const [revisions, total] = await Promise.all([
+        brandDb.getBrandRevisions(domain, { limit, offset }),
+        brandDb.getBrandRevisionCount(domain),
+      ]);
+
+      if (total === 0) {
+        const brand = await brandDb.getDiscoveredBrandByDomain(domain);
+        if (!brand) {
+          return res.status(404).json({ error: "Brand not found", domain });
+        }
+      }
+
+      return res.json({
+        domain,
+        total,
+        revisions: revisions.map((r) => ({
+          revision_number: r.revision_number,
+          editor_name: r.editor_name || "system",
+          edit_summary: r.edit_summary,
+          source: (r.snapshot as Record<string, unknown>)?.source_type,
+          is_rollback: r.is_rollback,
+          rolled_back_to: r.rolled_back_to,
+          created_at: r.created_at.toISOString(),
+        })),
+      });
+    } catch (error) {
+      logger.error({ error }, "Failed to get brand history");
+      return res.status(500).json({ error: "Failed to get brand history" });
+    }
+  });
+
+  router.get("/brands/find", async (req, res) => {
+    try {
+      const q = (req.query.q as string | undefined)?.trim();
+      if (!q || q.length < 2) {
+        return res.status(400).json({ error: "q parameter required (min 2 characters)" });
+      }
+      const rawLimit = parseInt(req.query.limit as string, 10);
+      const limit = Number.isFinite(rawLimit) ? Math.min(rawLimit, 50) : 10;
+      const results = await brandDb.findCompany(q, { limit });
+      return res.json({ results });
+    } catch (error) {
+      logger.error({ error }, "Failed to find company");
+      return res.status(500).json({ error: "Failed to find company" });
+    }
+  });
+
   router.get("/brands/resolve", async (req, res) => {
     try {
       const domain = req.query.domain as string;
@@ -832,18 +993,51 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
 
   router.get("/brands/enrich", async (req, res) => {
     try {
-      const domain = req.query.domain as string;
-      if (!domain) {
+      const rawDomain = req.query.domain as string;
+      if (!rawDomain) {
         return res.status(400).json({ error: "domain parameter required" });
       }
 
-      const { fetchBrandData, isBrandfetchConfigured } = await import("../services/brandfetch.js");
+      const domain = rawDomain.replace(/^https?:\/\//, '').replace(/[/?#].*$/, '').replace(/\/$/, '').toLowerCase();
+
+      // Return cached enrichment if still fresh (avoids Brandfetch API cost)
+      const existing = await brandDb.getDiscoveredBrandByDomain(domain);
+      if (existing?.has_brand_manifest && existing.brand_manifest && existing.last_validated) {
+        const ageMs = Date.now() - new Date(existing.last_validated).getTime();
+        if (ageMs < ENRICHMENT_CACHE_MAX_AGE_MS) {
+          return res.json({ success: true, domain: existing.domain, cached: true, manifest: existing.brand_manifest });
+        }
+      }
+
       if (!isBrandfetchConfigured()) {
         return res.status(503).json({ error: "Brandfetch not configured" });
       }
 
       const enrichment = await fetchBrandData(domain);
-      return res.json(enrichment);
+
+      if (!enrichment.success) {
+        return res.status(404).json({ error: enrichment.error, domain });
+      }
+
+      if (enrichment.manifest) {
+        brandDb.upsertDiscoveredBrand({
+          domain: enrichment.domain,
+          brand_name: enrichment.manifest.name,
+          brand_manifest: {
+            name: enrichment.manifest.name,
+            url: enrichment.manifest.url,
+            description: enrichment.manifest.description,
+            logos: enrichment.manifest.logos,
+            colors: enrichment.manifest.colors,
+            fonts: enrichment.manifest.fonts,
+            ...(enrichment.company ? { company: enrichment.company } : {}),
+          },
+          has_brand_manifest: true,
+          source_type: 'enriched',
+        }).catch((err) => logger.warn({ err, domain }, 'Failed to save enrichment result'));
+      }
+
+      return res.json({ success: true, domain: enrichment.domain, cached: false, manifest: enrichment.manifest, company: enrichment.company });
     } catch (error) {
       logger.error({ error }, "Failed to enrich brand");
       return res.status(500).json({ error: "Failed to enrich brand" });
@@ -1011,6 +1205,49 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
     } catch (error) {
       logger.error({ error }, "Failed to list properties");
       return res.status(500).json({ error: "Failed to list properties" });
+    }
+  });
+
+  router.get("/properties/history", async (req, res) => {
+    try {
+      const domain = (req.query.domain as string)?.replace(/^https?:\/\//, "").replace(/[/?#].*$/, "").replace(/\/$/, "").toLowerCase();
+      if (!domain) {
+        return res.status(400).json({ error: "domain parameter required" });
+      }
+      const rawLimit = parseInt(req.query.limit as string, 10);
+      const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 20;
+      const rawOffset = parseInt(req.query.offset as string, 10);
+      const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+
+      const [revisions, total] = await Promise.all([
+        propertyDb.getPropertyRevisions(domain, { limit, offset }),
+        propertyDb.getPropertyRevisionCount(domain),
+      ]);
+
+      if (total === 0) {
+        const hosted = await propertyDb.getHostedPropertyByDomain(domain);
+        const discovered = await propertyDb.getDiscoveredPropertiesByDomain(domain);
+        if (!hosted && discovered.length === 0) {
+          return res.status(404).json({ error: "Property not found", domain });
+        }
+      }
+
+      return res.json({
+        domain,
+        total,
+        revisions: revisions.map((r) => ({
+          revision_number: r.revision_number,
+          editor_name: r.editor_name || "system",
+          edit_summary: r.edit_summary,
+          source: (r.snapshot as Record<string, unknown>)?.source_type,
+          is_rollback: r.is_rollback,
+          rolled_back_to: r.rolled_back_to,
+          created_at: r.created_at.toISOString(),
+        })),
+      });
+    } catch (error) {
+      logger.error({ error }, "Failed to get property history");
+      return res.status(500).json({ error: "Failed to get property history" });
     }
   });
 
@@ -1187,7 +1424,7 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
       }
 
       const adagentsJson: Record<string, unknown> = {
-        $schema: "https://adcontextprotocol.org/schemas/v1/adagents.json",
+        $schema: "https://adcontextprotocol.org/schemas/latest/adagents.json",
         authorized_agents,
         properties: properties || [],
       };
@@ -1236,6 +1473,47 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
     } catch (error) {
       logger.error({ error }, "Failed to save property");
       return res.status(500).json({ error: "Failed to save property" });
+    }
+  });
+
+  // ── Property List Check ────────────────────────────────────────
+
+  const REPORT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  router.post("/properties/check", bulkResolveRateLimiter, async (req, res) => {
+    try {
+      const { domains } = req.body;
+      if (!Array.isArray(domains)) {
+        return res.status(400).json({ error: "domains array is required" });
+      }
+      if (domains.length > 10000) {
+        return res.status(400).json({ error: "Maximum 10,000 domains per request" });
+      }
+
+      const results = await propertyCheckService.check(domains);
+      const { id: report_id } = await propertyCheckDb.saveReport(results);
+
+      return res.json({ ...results, report_id });
+    } catch (error) {
+      logger.error({ error }, "Failed to check property list");
+      return res.status(500).json({ error: "Failed to check property list" });
+    }
+  });
+
+  router.get("/properties/check/:reportId", async (req, res) => {
+    try {
+      const { reportId } = req.params;
+      if (!REPORT_UUID_RE.test(reportId)) {
+        return res.status(404).json({ error: "Report not found or expired" });
+      }
+      const results = await propertyCheckDb.getReport(reportId);
+      if (!results) {
+        return res.status(404).json({ error: "Report not found or expired" });
+      }
+      return res.json(results);
+    } catch (error) {
+      logger.error({ error }, "Failed to retrieve property check report");
+      return res.status(500).json({ error: "Failed to retrieve report" });
     }
   });
 
@@ -1757,7 +2035,7 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
         stats.product_count = 0;
         stats.publisher_count = 0;
         try {
-          const result = await client.getProducts({ brief: "" });
+          const result = await client.getProducts({ buying_mode: 'wholesale' });
           if (result.data?.products) {
             stats.product_count = result.data.products.length;
           }
@@ -1792,17 +2070,14 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
       return res.json({
         success: true,
         formats: formats.map((format) => {
-          const formatWithAssets = format as typeof format & { assets?: unknown };
           return {
             format_id: format.format_id,
             name: format.name,
             type: format.type,
             description: format.description,
-            preview_image: format.preview_image,
             example_url: format.example_url,
             renders: format.renders,
-            assets_required: format.assets_required,
-            assets: formatWithAssets.assets,
+            assets: format.assets,
             output_format_ids: format.output_format_ids,
             agent_url: format.agent_url,
           };
@@ -1834,7 +2109,7 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
         protocol: "mcp",
       });
 
-      const result = await client.getProducts({ brief: "" });
+      const result = await client.getProducts({ buying_mode: 'wholesale' });
       const products = result.data?.products || [];
 
       return res.json({

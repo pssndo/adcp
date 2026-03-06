@@ -11,11 +11,15 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { createLogger } from '../logger.js';
 import { fetchBrandData, isBrandfetchConfigured } from './brandfetch.js';
+import { downloadAndCacheLogos } from './logo-cdn.js';
 import { classifyBrand } from './brand-classifier.js';
 import { brandDb } from '../db/brand-db.js';
 import { registryRequestsDb } from '../db/registry-requests-db.js';
 import { query } from '../db/client.js';
+import { getPool } from '../db/client.js';
 import { ModelConfig } from '../config/models.js';
+import { enrichOrganization } from './enrichment.js';
+import { isLushaConfigured } from './lusha.js';
 import type { UpsertDiscoveredBrandInput } from '../db/brand-db.js';
 import type { BrandfetchEnrichmentResult } from './brandfetch.js';
 import type { BrandClassification } from './brand-classifier.js';
@@ -161,6 +165,11 @@ export async function enrichBrand(domain: string): Promise<BrandEnrichmentResult
   // Sanitize brand name — Brandfetch sometimes returns garbage (e.g., "About", "Home")
   const brandName = sanitizeBrandName(result.manifest.name, domain);
 
+  // Download logos to our CDN so external agents can access them without hotlink restrictions
+  const logos = (result.manifest.logos && result.manifest.logos.length > 0)
+    ? await downloadAndCacheLogos(domain, result.manifest.logos)
+    : result.manifest.logos;
+
   // Map to discovered brand input
   const input: UpsertDiscoveredBrandInput = {
     domain,
@@ -169,7 +178,7 @@ export async function enrichBrand(domain: string): Promise<BrandEnrichmentResult
       name: brandName,
       url: result.manifest.url,
       description: result.manifest.description,
-      logos: result.manifest.logos,
+      logos,
       colors: result.manifest.colors,
       fonts: result.manifest.fonts,
       ...(result.company ? { company: result.company } : {}),
@@ -310,6 +319,65 @@ export async function getEnrichmentCandidates(options: {
   }
 
   return candidates.slice(0, limit);
+}
+
+/**
+ * Migrate existing enriched brands that still have Brandfetch CDN logo URLs.
+ * Downloads logos to our CDN and updates the manifest in the DB.
+ */
+export async function migrateLogosToHosted(options: {
+  limit?: number;
+  delayMs?: number;
+} = {}): Promise<{ total: number; migrated: number; failed: number; skipped: number }> {
+  const limit = Math.min(Math.max(1, options.limit || 50), 200);
+  const delayMs = Math.max(0, options.delayMs ?? 500);
+
+  const result = await query<{ domain: string; brand_manifest: Record<string, unknown> }>(
+    `SELECT domain, brand_manifest FROM discovered_brands
+     WHERE source_type IN ('enriched', 'community')
+       AND has_brand_manifest = true
+       AND EXISTS (
+         SELECT 1 FROM jsonb_array_elements(brand_manifest->'logos') AS logo
+         WHERE logo->>'url' LIKE '%cdn.brandfetch.io%'
+       )
+     ORDER BY domain
+     LIMIT $1`,
+    [limit]
+  );
+
+  const summary = { total: result.rows.length, migrated: 0, failed: 0, skipped: 0 };
+
+  for (let i = 0; i < result.rows.length; i++) {
+    const row = result.rows[i];
+    const logos = (row.brand_manifest.logos as Array<{ url: string; tags: string[] }> | undefined);
+
+    if (!logos || logos.length === 0) {
+      summary.skipped++;
+      continue;
+    }
+
+    try {
+      const hosted = await downloadAndCacheLogos(row.domain, logos);
+      await query(
+        `UPDATE discovered_brands
+         SET brand_manifest = brand_manifest || $2::jsonb
+         WHERE domain = $1`,
+        [row.domain, JSON.stringify({ logos: hosted })]
+      );
+      summary.migrated++;
+      logger.info({ domain: row.domain }, 'Logos migrated to CDN');
+    } catch (err) {
+      logger.warn({ err, domain: row.domain }, 'Logo migration failed');
+      summary.failed++;
+    }
+
+    if (delayMs > 0 && i < result.rows.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+
+  logger.info(summary, 'Logo migration complete');
+  return summary;
 }
 
 /**
@@ -531,4 +599,213 @@ export async function expandHouse(houseDomain: string, options: {
     enriching: toEnrich.length,
     brands: results,
   };
+}
+
+// ========== Domain Research (Unified Enrichment) ==========
+
+// Concurrency guard: prevent duplicate API calls for the same domain
+const researchInProgress = new Set<string>();
+
+// Rate limiter: track enrichments in the last hour
+const recentResearchTimestamps: number[] = [];
+const HOURLY_RESEARCH_LIMIT = 50;
+
+function isRateLimited(): boolean {
+  const oneHourAgo = Date.now() - 60 * 60 * 1000;
+  // Prune old entries
+  while (recentResearchTimestamps.length > 0 && recentResearchTimestamps[0] < oneHourAgo) {
+    recentResearchTimestamps.shift();
+  }
+  return recentResearchTimestamps.length >= HOURLY_RESEARCH_LIMIT;
+}
+
+export interface DomainResearchOptions {
+  skip_brandfetch?: boolean;
+  skip_classification?: boolean;
+  skip_lusha?: boolean;
+  org_id?: string;
+}
+
+export interface DomainResearchAction {
+  source: 'brandfetch' | 'sonnet' | 'lusha' | 'db';
+  action: 'fetched' | 'skipped_fresh' | 'skipped_config' | 'skipped_in_progress' | 'skipped_rate_limit' | 'failed' | 'not_found';
+  detail?: string;
+}
+
+export interface DomainResearchResult {
+  domain: string;
+  brand?: {
+    brand_name: string;
+    keller_type?: string;
+    house_domain?: string;
+    parent_brand?: string;
+    source_type: string;
+    classification_confidence?: string;
+  };
+  firmographics?: {
+    company_name?: string;
+    employee_count?: number;
+    revenue_range?: string;
+    industry?: string;
+    country?: string;
+  };
+  org?: {
+    workos_organization_id: string;
+    name: string;
+    subscription_status: string | null;
+  };
+  actions: DomainResearchAction[];
+}
+
+/**
+ * Progressive domain research: checks what's known, fills gaps from external APIs.
+ *
+ * 1. Check discovered_brands — skip Brandfetch+Sonnet if enriched & fresh (< 30 days)
+ * 2. Check organizations — skip Lusha if org has fresh enrichment data
+ * 3. Call enrichBrand() for brand data gaps (Brandfetch + Sonnet classification)
+ * 4. Call enrichOrganization() for firmographic gaps (Lusha)
+ * 5. Return unified result with actions log
+ */
+export async function researchDomain(
+  domain: string,
+  options: DomainResearchOptions = {}
+): Promise<DomainResearchResult> {
+  const normalizedDomain = domain.toLowerCase().trim();
+  const actions: DomainResearchAction[] = [];
+
+  // Concurrency guard
+  if (researchInProgress.has(normalizedDomain)) {
+    return {
+      domain: normalizedDomain,
+      actions: [{ source: 'brandfetch', action: 'skipped_in_progress', detail: 'Research already in progress for this domain' }],
+    };
+  }
+
+  researchInProgress.add(normalizedDomain);
+  try {
+    const pool = getPool();
+    const FRESHNESS_DAYS = 30;
+    const freshThreshold = new Date();
+    freshThreshold.setDate(freshThreshold.getDate() - FRESHNESS_DAYS);
+
+    // Step 1: Check existing brand data
+    const existingBrand = await brandDb.getDiscoveredBrandByDomain(normalizedDomain);
+    const brandIsFresh = existingBrand?.source_type === 'enriched'
+      && existingBrand.has_brand_manifest
+      && existingBrand.last_validated
+      && new Date(existingBrand.last_validated) > freshThreshold;
+
+    // Step 2: Check existing org + Lusha data
+    const orgResult = await pool.query(
+      `SELECT workos_organization_id, name, subscription_status, enrichment_at
+       FROM organizations WHERE email_domain = $1 LIMIT 1`,
+      [normalizedDomain]
+    );
+    const org = orgResult.rows[0] || null;
+    const orgId = options.org_id || org?.workos_organization_id || null;
+    const lushaIsFresh = org?.enrichment_at && new Date(org.enrichment_at) > freshThreshold;
+
+    // Step 3: Enrich brand if needed
+    if (brandIsFresh) {
+      actions.push({ source: 'brandfetch', action: 'skipped_fresh', detail: `Last validated ${existingBrand!.last_validated}` });
+    } else if (options.skip_brandfetch) {
+      actions.push({ source: 'brandfetch', action: 'skipped_config' });
+    } else if (existingBrand?.source_type === 'brand_json') {
+      actions.push({ source: 'brandfetch', action: 'skipped_fresh', detail: 'Authoritative brand (brand.json)' });
+    } else if (isRateLimited()) {
+      actions.push({ source: 'brandfetch', action: 'skipped_rate_limit', detail: `>${HOURLY_RESEARCH_LIMIT} enrichments in the last hour` });
+    } else if (!isBrandfetchConfigured()) {
+      actions.push({ source: 'brandfetch', action: 'skipped_config', detail: 'BRANDFETCH_API_KEY not set' });
+    } else {
+      recentResearchTimestamps.push(Date.now());
+      const brandResult = await enrichBrand(normalizedDomain);
+      if (brandResult.status === 'enriched') {
+        actions.push({ source: 'brandfetch', action: 'fetched', detail: brandResult.brand_name });
+        if (brandResult.classification) {
+          actions.push({ source: 'sonnet', action: 'fetched', detail: `${brandResult.classification.keller_type} (${brandResult.classification.confidence})` });
+        }
+      } else if (brandResult.status === 'not_found') {
+        actions.push({ source: 'brandfetch', action: 'not_found', detail: brandResult.error });
+      } else if (brandResult.status === 'failed') {
+        actions.push({ source: 'brandfetch', action: 'failed', detail: brandResult.error });
+      } else {
+        actions.push({ source: 'brandfetch', action: 'skipped_fresh', detail: brandResult.error });
+      }
+    }
+
+    // Step 4: Enrich firmographics if needed
+    if (lushaIsFresh) {
+      actions.push({ source: 'lusha', action: 'skipped_fresh', detail: `Enriched ${org.enrichment_at}` });
+    } else if (options.skip_lusha) {
+      actions.push({ source: 'lusha', action: 'skipped_config' });
+    } else if (!orgId) {
+      actions.push({ source: 'lusha', action: 'skipped_config', detail: 'No organization found for domain' });
+    } else if (isRateLimited()) {
+      actions.push({ source: 'lusha', action: 'skipped_rate_limit' });
+    } else if (!isLushaConfigured()) {
+      actions.push({ source: 'lusha', action: 'skipped_config', detail: 'LUSHA_API_KEY not set' });
+    } else {
+      const lushaResult = await enrichOrganization(orgId, normalizedDomain);
+      if (lushaResult.success && lushaResult.enriched) {
+        actions.push({ source: 'lusha', action: lushaResult.cached ? 'skipped_fresh' : 'fetched', detail: lushaResult.data?.companyName });
+      } else {
+        actions.push({ source: 'lusha', action: 'failed', detail: lushaResult.error });
+      }
+    }
+
+    // Assemble result from current DB state (may have just been updated)
+    const finalBrand = await brandDb.getDiscoveredBrandByDomain(normalizedDomain);
+    const finalOrg = orgId ? (await pool.query(
+      `SELECT workos_organization_id, name, subscription_status,
+              enrichment_industry, enrichment_employee_count,
+              enrichment_revenue_range, enrichment_country,
+              enrichment_data
+       FROM organizations WHERE workos_organization_id = $1`,
+      [orgId]
+    )).rows[0] : null;
+
+    const result: DomainResearchResult = {
+      domain: normalizedDomain,
+      actions,
+    };
+
+    if (finalBrand) {
+      const classification = finalBrand.brand_manifest?.classification as
+        { confidence?: string } | undefined;
+      result.brand = {
+        brand_name: finalBrand.brand_name || normalizedDomain,
+        keller_type: finalBrand.keller_type || undefined,
+        house_domain: finalBrand.house_domain || undefined,
+        parent_brand: finalBrand.parent_brand || undefined,
+        source_type: finalBrand.source_type,
+        classification_confidence: classification?.confidence,
+      };
+    }
+
+    if (finalOrg) {
+      result.org = {
+        workos_organization_id: finalOrg.workos_organization_id,
+        name: finalOrg.name,
+        subscription_status: finalOrg.subscription_status,
+      };
+      if (finalOrg.enrichment_industry || finalOrg.enrichment_employee_count) {
+        result.firmographics = {
+          company_name: finalOrg.enrichment_data?.companyName,
+          employee_count: finalOrg.enrichment_employee_count || undefined,
+          revenue_range: finalOrg.enrichment_revenue_range || undefined,
+          industry: finalOrg.enrichment_industry || undefined,
+          country: finalOrg.enrichment_country || undefined,
+        };
+      }
+    }
+
+    logger.info(
+      { domain: normalizedDomain, actions: actions.map(a => `${a.source}:${a.action}`) },
+      'Domain research complete'
+    );
+
+    return result;
+  } finally {
+    researchInProgress.delete(normalizedDomain);
+  }
 }

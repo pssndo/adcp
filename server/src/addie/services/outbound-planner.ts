@@ -24,6 +24,7 @@ import type {
   PlannerDecisionMethod,
   GoalOutcome,
 } from '../types.js';
+import { FOUNDING_DEADLINE } from '../founding-deadline.js';
 
 /**
  * Outbound Planner - decides what goal to pursue with each user
@@ -307,6 +308,35 @@ export class OutboundPlanner {
       }
     }
 
+    // PRIORITY 3.5: Founding member deadline (time-sensitive, expires April 1 2026)
+    if (new Date() < FOUNDING_DEADLINE && !ctx.user.is_member && !ctx.company?.is_personal_workspace) {
+      const deadlineGoal = goals.find(g => g.name === 'Founding Member Deadline');
+      if (deadlineGoal) {
+        return {
+          goal: deadlineGoal,
+          reason: 'Founding member deadline approaching March 31',
+          priority_score: 95,
+          alternative_goals: goals.filter(g => g.id !== deadlineGoal.id).slice(0, 3),
+          decision_method: 'rule_match',
+        };
+      }
+    }
+
+    // PRIORITY 3.6: Addie-owned prospects — prioritize invitation/membership goals
+    // These are prospects Addie has triaged and claimed; she should nudge them toward membership
+    if (ctx.company?.is_addie_prospect && !ctx.user.is_member) {
+      const inviteGoal = goals.find(g => g.category === 'invitation');
+      if (inviteGoal) {
+        return {
+          goal: inviteGoal,
+          reason: 'Addie-owned prospect — prioritizing membership invitation',
+          priority_score: 80,
+          alternative_goals: goals.filter(g => g.id !== inviteGoal.id).slice(0, 3),
+          decision_method: 'rule_match',
+        };
+      }
+    }
+
     // PRIORITY 4: Vendor membership (tech companies benefit from profile visibility)
     // Only for non-members at vendor-type companies
     const vendorTypes = ['adtech', 'ai', 'data'];
@@ -493,7 +523,7 @@ export class OutboundPlanner {
 - Name: ${ctx.user.display_name ?? 'Unknown'}
 - Company: ${ctx.company?.name ?? 'Unknown'}
 - Role in Community: ${roleStr}
-- Account Status: ${ctx.user.is_mapped ? 'Linked' : 'Not linked'}, ${ctx.user.is_member ? 'Paying member' : 'Not yet a member'}
+- Account Status: ${ctx.user.is_mapped ? 'Linked' : 'Not linked'}, ${ctx.user.is_member ? 'Paying member' : 'Not yet a member'}${ctx.company?.is_addie_prospect ? '\n- SDR Status: Addie-owned prospect (actively being nurtured toward membership)' : ''}
 - Engagement Score: ${ctx.user.engagement_score}/100
 
 ## What They've Done (Capabilities)
@@ -579,6 +609,10 @@ Respond ONLY with valid JSON (no markdown code blocks):
     message = message.replace(/\{\{user_name\}\}/g, firstName);
     message = message.replace(/\{\{company_name\}\}/g, ctx.company?.name ?? 'your company');
     message = message.replace(/\{\{link_url\}\}/g, linkUrl ?? '');
+
+    // Dynamic countdown for time-sensitive goals (founding member deadline)
+    const daysRemaining = Math.max(0, Math.ceil((FOUNDING_DEADLINE.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+    message = message.replace(/\{\{days_remaining\}\}/g, String(daysRemaining));
 
     return message;
   }

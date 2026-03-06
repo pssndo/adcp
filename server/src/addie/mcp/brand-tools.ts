@@ -11,6 +11,8 @@ import { BrandManager } from '../../brand-manager.js';
 import { BrandDatabase } from '../../db/brand-db.js';
 import { registryRequestsDb } from '../../db/registry-requests-db.js';
 import { fetchBrandData, isBrandfetchConfigured, ENRICHMENT_CACHE_MAX_AGE_MS } from '../../services/brandfetch.js';
+import { downloadAndCacheLogos, isBrandfetchUrl } from '../../services/logo-cdn.js';
+import { query } from '../../db/client.js';
 import { createLogger } from '../../logger.js';
 
 const logger = createLogger('brand-tools');
@@ -150,7 +152,21 @@ export function createBrandToolHandlers(): Map<string, (args: Record<string, unk
           url: manifest.url,
         };
         if (Array.isArray(manifest.logos) && manifest.logos.length > 0) {
-          response.logos = (manifest.logos as Array<{ url: string; tags: string[] }>).slice(0, 3);
+          const logos = manifest.logos as Array<{ url: string; tags: string[] }>;
+          // Lazily migrate any logos still pointing at Brandfetch CDN
+          const hasBrandfetchUrls = logos.some((l) => isBrandfetchUrl(l.url));
+          if (hasBrandfetchUrls) {
+            // Use targeted UPDATE to only patch logos, preserving all other DB fields
+            downloadAndCacheLogos(domain, logos).then((hosted) => {
+              return query(
+                `UPDATE discovered_brands
+                 SET brand_manifest = brand_manifest || $2::jsonb
+                 WHERE domain = $1`,
+                [domain, JSON.stringify({ logos: hosted })]
+              );
+            }).catch((err) => { logger.warn({ err, domain }, 'Failed to migrate logos to CDN'); });
+          }
+          response.logos = logos.slice(0, 3);
         }
         if (manifest.colors) {
           response.colors = manifest.colors;
@@ -181,23 +197,32 @@ export function createBrandToolHandlers(): Map<string, (args: Record<string, unk
       });
     }
 
-    // Save enrichment to DB for future cache hits
+    // Save enrichment to DB for future cache hits (download logos to our CDN first)
     if (result.manifest) {
-      brandDb.upsertDiscoveredBrand({
-        domain: result.domain,
-        brand_name: result.manifest.name,
-        brand_manifest: {
-          name: result.manifest.name,
-          url: result.manifest.url,
-          description: result.manifest.description,
-          logos: result.manifest.logos,
-          colors: result.manifest.colors,
-          fonts: result.manifest.fonts,
-          ...(result.company ? { company: result.company } : {}),
-        },
-        has_brand_manifest: true,
-        source_type: 'enriched',
-      }).catch((err) => { logger.warn({ err, domain }, 'Failed to cache enrichment result'); });
+      (async () => {
+        try {
+          const logos = result.manifest!.logos && result.manifest!.logos.length > 0
+            ? await downloadAndCacheLogos(result.domain, result.manifest!.logos)
+            : result.manifest!.logos;
+          await brandDb.upsertDiscoveredBrand({
+            domain: result.domain,
+            brand_name: result.manifest!.name,
+            brand_manifest: {
+              name: result.manifest!.name,
+              url: result.manifest!.url,
+              description: result.manifest!.description,
+              logos,
+              colors: result.manifest!.colors,
+              fonts: result.manifest!.fonts,
+              ...(result.company ? { company: result.company } : {}),
+            },
+            has_brand_manifest: true,
+            source_type: 'enriched',
+          });
+        } catch (err) {
+          logger.warn({ err, domain }, 'Failed to cache enrichment result');
+        }
+      })();
     }
 
     // Format response for Addie
@@ -246,6 +271,20 @@ export function createBrandToolHandlers(): Map<string, (args: Record<string, unk
     const resolved = await brandManager.resolveBrand(domain);
 
     if (!resolved) {
+      // Check hosted brands before falling back to the discovered-brand registry — hosted brands always have a manifest
+      const hosted = await brandDb.getHostedBrandByDomain(domain);
+      if (hosted && hosted.is_public) {
+        const brandJson = hosted.brand_json;
+        const brandName = typeof brandJson?.name === 'string' ? brandJson.name : domain;
+        return JSON.stringify({
+          source: 'hosted',
+          canonical_id: domain,
+          canonical_domain: domain,
+          brand_name: brandName,
+          has_manifest: true,
+        }, null, 2);
+      }
+
       // Check discovered brands as fallback
       const discovered = await brandDb.getDiscoveredBrandByDomain(domain);
       if (discovered) {
@@ -276,7 +315,7 @@ export function createBrandToolHandlers(): Map<string, (args: Record<string, unk
       house_name: resolved.house_name,
       keller_type: resolved.keller_type,
       brand_agent_url: resolved.brand_agent_url,
-      has_manifest: !!resolved.brand_manifest,
+      has_manifest: resolved.source === 'brand_json',
     }, null, 2);
   });
 

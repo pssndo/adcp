@@ -19,10 +19,10 @@
     },
     "assets": {
       "type": "object",
-      "description": "Assets required by the format, keyed by asset_role",
+      "description": "Assets required by the format, keyed by asset_id",
       "patternProperties": {
-        "^[a-zA-Z0-9_-]+$": {
-          "oneOf": [
+        "^[a-z0-9_]+$": {
+          "anyOf": [
             {
               "$ref": "/schemas/core/assets/image-asset.json"
             },
@@ -33,28 +33,37 @@
               "$ref": "/schemas/core/assets/audio-asset.json"
             },
             {
+              "$ref": "/schemas/core/assets/vast-asset.json"
+            },
+            {
               "$ref": "/schemas/core/assets/text-asset.json"
+            },
+            {
+              "$ref": "/schemas/core/assets/url-asset.json"
             },
             {
               "$ref": "/schemas/core/assets/html-asset.json"
             },
             {
-              "$ref": "/schemas/core/assets/css-asset.json"
-            },
-            {
               "$ref": "/schemas/core/assets/javascript-asset.json"
             },
             {
-              "$ref": "/schemas/core/assets/vast-asset.json"
+              "$ref": "/schemas/core/assets/webhook-asset.json"
+            },
+            {
+              "$ref": "/schemas/core/assets/css-asset.json"
             },
             {
               "$ref": "/schemas/core/assets/daast-asset.json"
             },
             {
-              "$ref": "/schemas/core/promoted-offerings.json"
+              "$ref": "/schemas/core/assets/markdown-asset.json"
             },
             {
-              "$ref": "/schemas/core/assets/url-asset.json"
+              "$ref": "/schemas/core/assets/brief-asset.json"
+            },
+            {
+              "$ref": "/schemas/core/assets/catalog-asset.json"
             }
           ]
         }
@@ -113,6 +122,10 @@
         "type": "string"
       },
       "minItems": 1
+    },
+    "provenance": {
+      "$ref": "/schemas/core/provenance.json",
+      "description": "Provenance metadata for this creative. Serves as the default provenance for all manifests and assets within this creative. A manifest or asset with its own provenance replaces this object entirely (no field-level merging)."
     }
   },
   "required": [

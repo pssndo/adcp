@@ -15,7 +15,7 @@ import { getSlackUser, getChannelInfo } from './client.js';
 import { syncUserToChaptersFromSlackChannels } from './sync.js';
 import { invalidateUnifiedUsersCache } from '../cache/unified-users.js';
 import { invalidateMemberContextCache } from '../addie/index.js';
-import { invalidateWebAdminStatusCache } from '../addie/mcp/admin-tools.js';
+import { invalidateAdminStatusCache, invalidateWebAdminStatusCache } from '../addie/mcp/admin-tools.js';
 import {
   isAddieReady,
   handleAssistantThreadStarted,
@@ -26,6 +26,7 @@ import {
   type AssistantMessageEvent,
 } from '../addie/index.js';
 import { queueForNoteExtraction } from '../addie/services/passive-note-extractor.js';
+import { triageAndCreateProspect } from '../services/prospect-triage.js';
 
 const slackDb = new SlackDatabase();
 const addieDb = new AddieDatabase();
@@ -154,12 +155,26 @@ export async function handleTeamJoin(event: SlackTeamJoinEvent): Promise<void> {
       slack_tz_offset: user.tz_offset ?? null,
     });
 
-    // Auto-map by email if they have a web account
-    if (email) {
+    // Auto-map by email if they have a web account (skip bots)
+    if (email && !user.is_bot) {
       await tryAutoMapByEmail(user.id, email);
     }
 
     logger.info({ email }, 'New Slack user added');
+
+    // Fire-and-forget prospect triage for business emails
+    if (email && process.env.ANTHROPIC_API_KEY) {
+      const domain = email.split('@')[1];
+      const title = user.profile?.title ?? undefined;
+      triageAndCreateProspect(domain, {
+        name: realName ?? undefined,
+        email,
+        title,
+        source: 'slack',
+      }).catch(err => {
+        logger.error({ err, domain }, 'Prospect triage failed for Slack join');
+      });
+    }
   } catch (error) {
     logger.error({ error, userId: user.id }, 'Failed to process team_join event');
   }
@@ -268,6 +283,7 @@ async function tryAutoMapByEmail(slackUserId: string, email: string): Promise<vo
     }
 
     // Invalidate caches
+    invalidateAdminStatusCache(slackUserId);
     invalidateUnifiedUsersCache();
     invalidateMemberContextCache(slackUserId);
   } catch (error) {

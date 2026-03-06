@@ -131,7 +131,6 @@ const exampleData = {
   mediaBuy: {
     "media_buy_id": "mb_12345",
     "status": "active",
-    "promoted_offering": "Nike Air Max 2024 - latest innovation in cushioning",
     "total_budget": 50000,
     "packages": []
   },
@@ -161,7 +160,7 @@ const exampleData = {
   },
   
   frequencyCap: {
-    "suppress_minutes": 1440
+    "suppress": { "interval": 1, "unit": "days" }
   },
   
   format: {
@@ -169,7 +168,7 @@ const exampleData = {
     "name": "Standard Video - 30 seconds"
   },
   
-  measurement: {
+  outcome_measurement: {
     "type": "incremental_sales_lift",
     "attribution": "deterministic_purchase",
     "reporting": "weekly_dashboard"
@@ -192,8 +191,8 @@ const exampleData = {
   
   // Request/Response examples
   getProductsRequest: {
-    "promoted_offering": "Nike Air Max 2024 - latest innovation in cushioning",
-    "brief": "Premium video inventory for sports fans"
+    "buying_mode": "brief",
+    "brief": "Nike Air Max 2024 - Premium video inventory for sports fans"
   },
   
   getProductsResponse: {
@@ -220,7 +219,6 @@ const exampleData = {
         "products": ["ctv_sports_premium"]
       }
     ],
-    "promoted_offering": "Nike Air Max 2024 - latest innovation in cushioning",
     "po_number": "PO-2024-001",
     "start_time": "2024-01-01T00:00:00Z",
     "end_time": "2024-01-31T23:59:59Z",
@@ -266,7 +264,6 @@ const exampleData = {
         "format_ids": ["display_300x250"]
       }
     ],
-    "promoted_offering": "Acme Flash Sale - 24-hour limited time offer",
     "start_time": "asap",
     "end_time": "2024-10-03T23:59:59Z",
     "budget": {
@@ -279,10 +276,11 @@ const exampleData = {
   // Signals examples
   getSignalsRequest: {
     "signal_spec": "High-income households interested in luxury goods",
-    "deliver_to": {
-      "platforms": ["the-trade-desk", "amazon-dsp"],
-      "countries": ["US"]
-    }
+    "destinations": [
+      { "type": "platform", "platform": "the-trade-desk" },
+      { "type": "platform", "platform": "amazon-dsp" }
+    ],
+    "countries": ["US"]
   },
   
   getSignalsResponse: {
@@ -389,11 +387,11 @@ test('Format example validates against schema', () => {
   );
 });
 
-test('Measurement example validates against schema', () => {
+test('Outcome Measurement example validates against schema', () => {
   return validateAgainstSchema(
-    exampleData.measurement, 
-    '/schemas/source/core/measurement.json', 
-    'Measurement example'
+    exampleData.outcome_measurement,
+    '/schemas/source/core/outcome-measurement.json',
+    'Outcome Measurement example'
   );
 });
 
