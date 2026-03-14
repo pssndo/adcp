@@ -1,0 +1,146 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "/schemas/extensions/newsletter_delivery.json",
+  "title": "Newsletter Delivery Extension",
+  "description": "Delivery-level extension providing email-specific metrics. Attach as ext.newsletter on delivery reports to supplement standard impressions and clicks with email engagement metrics, client breakdowns, and per-sendout performance.",
+  "valid_from": "3.0",
+  "docs_url": "https://docs.adcontextprotocol.org/docs/guides/newsletter-advertising",
+  "type": "object",
+  "properties": {
+    "emails_sent": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of emails sent in the reporting period"
+    },
+    "unique_opens": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of unique subscribers who opened the email"
+    },
+    "total_opens": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total open events including repeat opens by the same subscriber"
+    },
+    "open_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Unique open rate as a decimal (unique_opens / emails_sent)"
+    },
+    "click_to_open_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Click-to-open rate (CTOR) as a decimal — unique clicks divided by unique opens for this reporting period."
+    },
+    "bounce_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Fraction of sent emails that bounced (hard + soft bounces)"
+    },
+    "unsubscribe_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Fraction of recipients who unsubscribed after this sendout"
+    },
+    "spam_complaint_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Fraction of recipients who marked the email as spam"
+    },
+    "by_email_client": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "client": {
+            "$ref": "/schemas/enums/email-client.json"
+          },
+          "impressions": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Ad impressions from subscribers using this client"
+          },
+          "clicks": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Ad clicks from subscribers using this client"
+          }
+        },
+        "required": ["client", "impressions", "clicks"]
+      },
+      "description": "Ad performance breakdown by email client"
+    },
+    "by_reading_device": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "device": {
+            "$ref": "/schemas/enums/reading-device.json"
+          },
+          "impressions": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Ad impressions from subscribers on this device type"
+          },
+          "clicks": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Ad clicks from subscribers on this device type"
+          }
+        },
+        "required": ["device", "impressions", "clicks"]
+      },
+      "description": "Ad performance breakdown by reading device type"
+    },
+    "by_sendout": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sendout_id": {
+            "type": "string",
+            "description": "Sendout identifier matching newsletter_sendout.sendout_id"
+          },
+          "edition": {
+            "type": "string",
+            "description": "Human-readable edition label"
+          },
+          "sent_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Actual send time in ISO 8601 format"
+          },
+          "emails_sent": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Emails sent in this sendout"
+          },
+          "unique_opens": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Unique opens for this sendout"
+          },
+          "impressions": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Ad impressions in this sendout"
+          },
+          "clicks": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Ad clicks in this sendout"
+          }
+        },
+        "required": ["sendout_id", "sent_at", "emails_sent"]
+      },
+      "description": "Per-sendout performance breakdown"
+    }
+  },
+  "additionalProperties": false
+}

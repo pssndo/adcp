@@ -1,0 +1,938 @@
+---
+title: Newsletter Advertising
+description: How AdCP handles email newsletter advertising — from subscriber audience discovery to per-sendout delivery reporting
+keywords: [newsletter, email advertising, email marketing, sponsored content, newsletter monetization, open rate, click rate, sendout, subscriber]
+---
+
+
+Newsletter advertising — sponsored content within email newsletters — lets brands reach engaged subscribers in a high-attention, consent-based environment. AdCP's `email` channel combined with the `ext.newsletter` extension handles the full spectrum: native sponsored content, display banners, dedicated sends, and above-the-fold premium placements.
+
+What makes newsletter advertising unique is **scheduled, finite inventory**. Unlike web display where impressions are generated continuously, newsletters send to a known subscriber list at a specific time. Every sendout has a fixed audience size, and ad placements are sold against that known volume. AdCP models this through `upcoming_sendouts` on products and `by_sendout` breakdowns in delivery reporting.
+
+## Concept Mapping
+
+| Newsletter Concept | AdCP Equivalent | Reference |
+|---|---|---|
+| Publisher / newsletter operator | Sales agent (MCP server) | [`adagents.json`](/docs/governance/property/adagents) |
+| Newsletter as ad property | Property with `property_type: "newsletter"` | [Newsletter Discovery](#newsletter-discovery) |
+| Newsletter ad network / platform | Platform agent in AdCP Registry | [Newsletter Discovery](#newsletter-discovery) |
+| Target audience (tech, finance, etc.) | Signals Protocol `get_signals` with natural language brief | [Audience-First Discovery](#audience-first-discovery-via-signals-protocol) |
+| Newsletter title / publication | Media product with `channels: ["email"]` | [Media Products](/docs/media-buy/product-discovery/media-products) |
+| Subscriber list | `ext.newsletter.subscriber_count` | [Newsletter Extension](#native-sponsored-content) |
+| Send schedule / cadence | `ext.newsletter.send_frequency`, `send_days` | [Newsletter Extension](#native-sponsored-content) |
+| Upcoming edition / sendout | `ext.newsletter.upcoming_sendouts` | [Newsletter Extension](#native-sponsored-content) |
+| Ad slot / position in email | Placement with `ext.newsletter.position` | [Newsletter Extension](#native-sponsored-content) |
+| Open rate / click rate | `ext.newsletter.avg_open_rate`, `avg_click_rate` | [Newsletter Extension](#native-sponsored-content) |
+| Native ad spec (headline, body, CTA) | `ext.newsletter.native_spec` on placement | [Newsletter Extension](#native-sponsored-content) |
+| Per-sendout delivery stats | `ext.newsletter.by_sendout` in delivery | [Delivery Reporting](#delivery-reporting) |
+| Email client breakdown | `ext.newsletter.by_email_client` in delivery | [Delivery Reporting](#delivery-reporting) |
+| Same ad on multiple slots? | `ext.newsletter.creative_deduplication` | [Creative Deduplication](#creative-deduplication-across-placements) |
+
+Each newsletter publisher is a separate sales agent. Their newsletters are modeled as products. The `ext.newsletter` extension carries email-specific metadata — subscriber audience, send cadence, and upcoming sendouts — that has no equivalent in standard AdCP fields.
+
+## The Product Spectrum
+
+Newsletter publishers offer several product types depending on their audience size, editorial format, and monetization strategy. All share the `email` channel and use `ext.newsletter` for email-specific metadata.
+
+### Native Sponsored Content
+
+The most common newsletter ad format. The publisher renders the ad to match editorial styling — headline, body text, image, and CTA button. Pricing is typically CPM based on subscriber volume.
+
+```json
+{
+  "product_id": "techdigest_native_sponsorship",
+  "name": "Tech Digest - Native Sponsored Content",
+  "description": "Native ad placements within a daily technology newsletter reaching 85,000 subscribers. Publisher renders creative from provided assets to match editorial style.",
+  "channels": ["email"],
+  "publisher_properties": [
+    { "publisher_domain": "techdigest.io", "property_type": "newsletter", "selection_type": "all" }
+  ],
+  "format_ids": [
+    { "agent_url": "https://ads.techdigest.io", "id": "native_email_standard" },
+    { "agent_url": "https://creative.adcontextprotocol.org", "id": "display_600x100" }
+  ],
+  "placements": [
+    {
+      "placement_id": "above_fold_native",
+      "name": "Above the Fold - Native",
+      "format_ids": [{ "agent_url": "https://ads.techdigest.io", "id": "native_email_standard" }],
+      "ext": {
+        "newsletter": {
+          "position": "above_fold",
+          "position_index": 0,
+          "rendering_constraints": {
+            "max_file_size_bytes": 204800,
+            "supported_mime_types": ["image/png", "image/jpeg"],
+            "alt_text_required": true,
+            "retina_support": true
+          },
+          "native_spec": {
+            "headline_max_length": 60,
+            "body_max_length": 150,
+            "cta_max_length": 25,
+            "has_image": true,
+            "layout_id": "native_hero_v2"
+          }
+        }
+      }
+    },
+    {
+      "placement_id": "mid_content_native",
+      "name": "Mid-Content - Native",
+      "format_ids": [{ "agent_url": "https://ads.techdigest.io", "id": "native_email_standard" }],
+      "ext": {
+        "newsletter": {
+          "position": "in_content",
+          "position_index": 0,
+          "native_spec": {
+            "headline_max_length": 50,
+            "body_max_length": 120,
+            "cta_max_length": 20,
+            "has_image": true,
+            "layout_id": "native_inline_v1"
+          }
+        }
+      }
+    },
+    {
+      "placement_id": "footer_banner",
+      "name": "Footer - Display Banner",
+      "format_ids": [{ "agent_url": "https://creative.adcontextprotocol.org", "id": "display_600x100" }],
+      "ext": {
+        "newsletter": {
+          "position": "footer",
+          "position_index": 0,
+          "rendering_constraints": {
+            "max_file_size_bytes": 51200,
+            "supported_mime_types": ["image/png", "image/jpeg", "image/gif"],
+            "alt_text_required": true
+          }
+        }
+      }
+    }
+  ],
+  "delivery_type": "guaranteed",
+  "pricing_options": [
+    {
+      "pricing_option_id": "native_cpm",
+      "pricing_model": "cpm",
+      "fixed_price": 35.00,
+      "currency": "USD",
+      "min_spend_per_package": 500
+    }
+  ],
+  "delivery_measurement": {
+    "provider": "Publisher email platform",
+    "notes": "Impressions counted when subscriber email client loads the creative image. Clicks tracked via redirect URLs."
+  },
+  "ext": {
+    "newsletter": {
+      "subscriber_count": 85000,
+      "avg_open_rate": 0.42,
+      "avg_click_rate": 0.035,
+      "send_frequency": "daily",
+      "send_days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+      "typical_send_time": "07:30",
+      "language": "en",
+      "country": "US",
+      "categories": ["Technology", "Software", "Startups"],
+      "subscriber_consent_type": "double_optin",
+      "dark_mode_support": true,
+      "creative_deduplication": "required",
+      "email_client_distribution": [
+        { "client": "gmail", "share": 0.38 },
+        { "client": "apple_mail", "share": 0.31 },
+        { "client": "outlook", "share": 0.18 },
+        { "client": "other", "share": 0.13 }
+      ],
+      "upcoming_sendouts": [
+        {
+          "sendout_id": "td_2026_02_24",
+          "scheduled_at": "2026-02-24T07:30:00-05:00",
+          "expected_volume": 84200,
+          "available_impressions": 42100,
+          "edition": "Feb 24, 2026",
+          "sendout_status": "scheduled",
+          "available_placement_ids": ["above_fold_native"]
+        },
+        {
+          "sendout_id": "td_2026_02_25",
+          "scheduled_at": "2026-02-25T07:30:00-05:00",
+          "expected_volume": 84200,
+          "edition": "Feb 25, 2026",
+          "sendout_status": "scheduled",
+          "available_placement_ids": ["above_fold_native", "mid_content_native", "footer_banner"]
+        }
+      ]
+    }
+  }
+}
+```
+
+Key characteristics:
+- **Guaranteed delivery** — subscriber volume is known in advance
+- **Three placements** — above-the-fold native, mid-content native, and a footer display banner, each with their own format and position
+- **`creative_deduplication: "required"`** — the buyer must assign a distinct creative to each placement it books in the same sendout. This ensures subscribers see variety rather than the same ad repeated.
+- **`upcoming_sendouts`** — tells buyers exactly which editions are available and when they send
+- **Partial availability** — the Feb 24 sendout has `available_impressions: 42100` (half of `expected_volume: 84200`) because the publisher pre-sold the other half to a direct campaign. The Feb 25 sendout has full availability (no `available_impressions` field means all impressions are available). The Feb 24 sendout also has only one placement available (`above_fold_native`) because `mid_content_native` and `footer_banner` are fully booked.
+- **`native_spec`** on each placement — defines headline length, body length, CTA, and image requirements
+- **`email_client_distribution`** — helps buyers understand rendering environment for creative decisions
+- **`subscriber_consent_type: "double_optin"`** — signals high-quality, engaged audience
+
+### Display Banner in Newsletter
+
+Standard image banners placed within the email layout. Simpler creative requirements than native — the buyer provides a pre-rendered image.
+
+```json
+{
+  "product_id": "finweekly_display_banner",
+  "name": "Finance Weekly - Display Banner",
+  "description": "Display banner placement in a weekly finance newsletter reaching 120,000 subscribers.",
+  "channels": ["email"],
+  "publisher_properties": [
+    { "publisher_domain": "finweekly.com", "property_type": "newsletter", "selection_type": "all" }
+  ],
+  "format_ids": [
+    { "agent_url": "https://creative.adcontextprotocol.org", "id": "display_600x200" }
+  ],
+  "placements": [
+    {
+      "placement_id": "header_banner",
+      "name": "Header Banner",
+      "format_ids": [{ "agent_url": "https://creative.adcontextprotocol.org", "id": "display_600x200" }],
+      "ext": {
+        "newsletter": {
+          "position": "above_fold",
+          "position_index": 0,
+          "rendering_constraints": {
+            "max_file_size_bytes": 102400,
+            "supported_mime_types": ["image/png", "image/jpeg", "image/gif"],
+            "inline_css_only": true,
+            "alt_text_required": true,
+            "retina_support": false
+          }
+        }
+      }
+    }
+  ],
+  "delivery_type": "guaranteed",
+  "pricing_options": [
+    {
+      "pricing_option_id": "display_cpm",
+      "pricing_model": "cpm",
+      "fixed_price": 18.00,
+      "currency": "USD"
+    }
+  ],
+  "ext": {
+    "newsletter": {
+      "subscriber_count": 120000,
+      "avg_open_rate": 0.38,
+      "avg_click_rate": 0.022,
+      "send_frequency": "weekly",
+      "send_days": ["tuesday"],
+      "typical_send_time": "08:00",
+      "language": "en",
+      "country": "US",
+      "categories": ["Finance", "Investing", "Markets"],
+      "subscriber_consent_type": "double_optin"
+    }
+  }
+}
+```
+
+### Dedicated Send
+
+The entire email is a single sponsored message. The advertiser controls the full content — subject line, body, and creative. Premium pricing reflects exclusive access to the publisher's audience.
+
+```json
+{
+  "product_id": "healthnews_dedicated",
+  "name": "Health News Daily - Dedicated Send",
+  "description": "Full-email sponsored send to the complete Health News Daily subscriber base. Advertiser provides all content.",
+  "channels": ["email"],
+  "publisher_properties": [
+    { "publisher_domain": "healthnewsdaily.com", "property_type": "newsletter", "selection_type": "all" }
+  ],
+  "format_ids": [
+    { "agent_url": "https://ads.healthnewsdaily.com", "id": "dedicated_email_full" }
+  ],
+  "placements": [
+    {
+      "placement_id": "dedicated_full",
+      "name": "Full Email - Dedicated",
+      "format_ids": [{ "agent_url": "https://ads.healthnewsdaily.com", "id": "dedicated_email_full" }],
+      "ext": {
+        "newsletter": {
+          "position": "dedicated",
+          "position_index": 0,
+          "rendering_constraints": {
+            "max_file_size_bytes": 512000,
+            "supported_mime_types": ["image/png", "image/jpeg", "image/gif"],
+            "inline_css_only": true,
+            "alt_text_required": true
+          }
+        }
+      }
+    }
+  ],
+  "delivery_type": "guaranteed",
+  "pricing_options": [
+    {
+      "pricing_option_id": "dedicated_flat",
+      "pricing_model": "flat_rate",
+      "fixed_price": 5000.00,
+      "currency": "USD"
+    }
+  ],
+  "ext": {
+    "newsletter": {
+      "subscriber_count": 200000,
+      "avg_open_rate": 0.35,
+      "avg_click_rate": 0.028,
+      "send_frequency": "daily",
+      "send_days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+      "typical_send_time": "06:00",
+      "language": "en",
+      "country": "US",
+      "categories": ["Health", "Wellness", "Medical"],
+      "subscriber_consent_type": "explicit_optin"
+    }
+  }
+}
+```
+
+Dedicated sends use `flat_rate` pricing because the advertiser is buying the entire sendout, not individual impressions.
+
+## End-to-End Workflow
+
+<Steps>
+
+### Discover Newsletter Products
+
+Query `get_products` with `channels: ["email"]` to find newsletter inventory. The brief tells the seller what kind of audience and topic the buyer is looking for:
+
+```json
+{
+  "brief": "Reach technology decision-makers in the US. Looking for newsletter sponsorships with engaged audiences.",
+  "filters": {
+    "channels": ["email"]
+  }
+}
+```
+
+The seller returns products with `ext.newsletter` populated — subscriber count, open rates, upcoming sendouts, and placement details. A publisher with multiple newsletters returns each as a separate product.
+
+<Tip>
+Use `ext.newsletter.avg_open_rate` and `subscriber_consent_type` to evaluate audience quality. Double opt-in lists with open rates above 30% typically indicate highly engaged subscribers.
+</Tip>
+
+### Create Media Buy
+
+A media buy books specific sendouts and placements. The `packages` target products returned from discovery. Each package specifies a `budget` (required) and optionally an `impressions` goal. Placement targeting is done through `creative_assignments` — each creative can be assigned to specific placements via `placement_ids`:
+
+```json
+{
+  "buyer_ref": "saas_launch_q1",
+  "brand": {
+    "domain": "acmecloud.com"
+  },
+  "start_time": "2026-02-24T00:00:00Z",
+  "end_time": "2026-03-24T23:59:59Z",
+  "packages": [
+    {
+      "buyer_ref": "techdigest_native",
+      "product_id": "techdigest_native_sponsorship",
+      "pricing_option_id": "native_cpm",
+      "budget": 3220,
+      "impressions": 92000,
+      "pacing": "even",
+      "creative_assignments": [
+        {
+          "creative_id": "acme_native_hero",
+          "placement_ids": ["above_fold_native"]
+        }
+      ]
+    },
+    {
+      "buyer_ref": "finweekly_banner",
+      "product_id": "finweekly_display_banner",
+      "pricing_option_id": "display_cpm",
+      "budget": 900,
+      "impressions": 50000,
+      "pacing": "even",
+      "creative_assignments": [
+        {
+          "creative_id": "acme_banner_600x200",
+          "placement_ids": ["header_banner"]
+        }
+      ]
+    }
+  ]
+}
+```
+
+Key points:
+- **`impressions`** — the buyer specifies exactly how many impressions it wants. The Tech Digest package books 92,000 impressions across ~10 weekday sendouts in the campaign window (Feb 24 – Mar 24).
+- **`budget`** — calculated from impressions and CPM: 92,000 impressions at $35 CPM = $3,220. The budget is required and acts as a spend cap.
+- **`creative_assignments[].placement_ids`** — targets the creative to a specific placement. The buyer only books `above_fold_native`, not all three placements.
+- **`pacing: "even"`** — distributes delivery evenly across sendouts in the date range. The seller allocates impressions per sendout based on availability — for Feb 24 only 42,100 are available (see [partial availability](#partial-inventory-availability)), while other sendouts have full capacity.
+
+### Supply Creatives
+
+For native placements, the buyer provides creative assets that the publisher renders into their template:
+
+```json
+{
+  "format_id": {
+    "agent_url": "https://ads.techdigest.io",
+    "id": "native_email_standard"
+  },
+  "assets": {
+    "headline": {
+      "asset_type": "text",
+      "text": "Ship 10x Faster with Acme Cloud"
+    },
+    "body": {
+      "asset_type": "text",
+      "text": "Deploy to production in seconds. Auto-scaling infrastructure that grows with your team."
+    },
+    "cta": {
+      "asset_type": "text",
+      "text": "Start Free Trial"
+    },
+    "image": {
+      "asset_type": "image",
+      "url": "https://cdn.acmecloud.com/newsletter/hero.png",
+      "width": 600,
+      "height": 300
+    },
+    "click_url": {
+      "asset_type": "url",
+      "url_type": "clickthrough",
+      "url": "https://acmecloud.com/start?utm_source=techdigest&utm_medium=email"
+    },
+    "impression_tracker": {
+      "asset_type": "url",
+      "url_type": "tracker",
+      "url": "https://track.acmecloud.com/imp?buy={MEDIA_BUY_ID}&pkg={PACKAGE_ID}"
+    }
+  }
+}
+```
+
+For display banners, the buyer provides a pre-rendered image — same as any display format.
+
+### Delivery Reporting
+
+Newsletter delivery reports include standard AdCP metrics plus email-specific breakdowns via `ext.newsletter`:
+
+```json
+{
+  "reporting_period": {
+    "start": "2026-02-24T00:00:00Z",
+    "end": "2026-03-10T23:59:59Z"
+  },
+  "currency": "USD",
+  "media_buy_deliveries": [
+    {
+      "media_buy_id": "mb_newsletter_001",
+      "buyer_ref": "saas_launch_q1",
+      "status": "active",
+      "totals": {
+        "impressions": 142000,
+        "clicks": 4970,
+        "spend": 4120
+      },
+      "by_package": [
+        {
+          "package_id": "pkg_td_001",
+          "buyer_ref": "techdigest_native",
+          "pricing_model": "cpm",
+          "rate": 35.00,
+          "currency": "USD",
+          "impressions": 92000,
+          "clicks": 3680,
+          "spend": 3220,
+          "delivery_status": "delivering",
+          "ext": {
+            "newsletter": {
+              "emails_sent": 842000,
+              "unique_opens": 353640,
+              "total_opens": 496000,
+              "open_rate": 0.42,
+              "bounce_rate": 0.008,
+              "unsubscribe_rate": 0.001,
+              "spam_complaint_rate": 0.0001,
+              "by_email_client": [
+                { "client": "gmail", "impressions": 34960, "clicks": 1398 },
+                { "client": "apple_mail", "impressions": 28520, "clicks": 1141 },
+                { "client": "outlook", "impressions": 16560, "clicks": 663 },
+                { "client": "other", "impressions": 11960, "clicks": 478 }
+              ],
+              "by_reading_device": [
+                { "device": "mobile", "impressions": 50600, "clicks": 2024 },
+                { "device": "desktop", "impressions": 32200, "clicks": 1288 },
+                { "device": "webmail", "impressions": 9200, "clicks": 368 }
+              ],
+              "by_sendout": [
+                {
+                  "sendout_id": "td_2026_02_24",
+                  "edition": "Feb 24, 2026",
+                  "sent_at": "2026-02-24T07:30:00-05:00",
+                  "emails_sent": 84200,
+                  "unique_opens": 35364,
+                  "impressions": 9200,
+                  "clicks": 368
+                },
+                {
+                  "sendout_id": "td_2026_02_25",
+                  "edition": "Feb 25, 2026",
+                  "sent_at": "2026-02-25T07:30:00-05:00",
+                  "emails_sent": 84200,
+                  "unique_opens": 35364,
+                  "impressions": 9400,
+                  "clicks": 376
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+The `ext.newsletter` block on each package provides the email-specific context that standard AdCP delivery metrics cannot capture: per-sendout breakdowns, email client distribution, and newsletter health metrics like bounce rate and spam complaints.
+
+</Steps>
+
+## Why Email Needs Special Treatment
+
+Email advertising operates under fundamentally different constraints than web or app display:
+
+| Aspect | Web/App Display | Email Newsletter |
+|---|---|---|
+| Inventory timing | Continuous, real-time | Scheduled sendouts with fixed audience |
+| JavaScript | Fully supported | Not supported in any email client |
+| Tracking | Cookies, device IDs, JS events | Pixel opens, redirect clicks only |
+| Styling | External CSS, media queries | Inline CSS only in most clients |
+| Rendering | One browser engine | Dozens of email clients with varying support |
+| Audience size | Variable (traffic-dependent) | Known (subscriber list) |
+| Ad loading | Dynamic, client-side | Static, server-rendered at send time |
+| Frequency | Unlimited pageviews | Fixed send schedule (daily, weekly, etc.) |
+
+These differences mean:
+- **No real-time bidding** — inventory is booked against known sendouts, not bid on per-impression
+- **Guaranteed delivery** — subscriber count is known, so CPM-based pricing delivers predictable volumes
+- **Creative constraints** — no animation, no video, inline CSS only, image proxy considerations
+- **Measurement differences** — open tracking via pixel, click tracking via redirect, no viewability measurement
+
+<Info>
+Apple Mail Privacy Protection (MPP) pre-fetches tracking pixels, inflating open rates. The `by_email_client` breakdown in delivery reports helps buyers understand which opens come from privacy-affected clients vs. genuine engagement signals.
+</Info>
+
+## Key Delivery Metrics
+
+| Metric | Field | Description |
+|---|---|---|
+| Emails sent | `ext.newsletter.emails_sent` | Total emails delivered in reporting period |
+| Unique opens | `ext.newsletter.unique_opens` | Unique subscribers who opened |
+| Open rate | `ext.newsletter.open_rate` | `unique_opens / emails_sent` |
+| Ad impressions | `impressions` (standard) | Ad views (subset of opens — only counted when ad slot is visible) |
+| Ad clicks | `clicks` (standard) | Click-throughs on the ad |
+| Bounce rate | `ext.newsletter.bounce_rate` | Delivery failures as fraction of sent |
+| Unsubscribe rate | `ext.newsletter.unsubscribe_rate` | Opt-outs per sendout |
+| Spam complaint rate | `ext.newsletter.spam_complaint_rate` | Spam reports per sendout |
+| Client breakdown | `ext.newsletter.by_email_client` | Impressions and clicks by email client |
+| Device breakdown | `ext.newsletter.by_reading_device` | Impressions and clicks by device type |
+| Per-sendout stats | `ext.newsletter.by_sendout` | Performance for each individual edition |
+
+## Best Practices
+
+### For Buyers
+
+1. **Check `avg_open_rate` and `subscriber_consent_type`** — double opt-in lists above 30% open rate indicate quality audiences
+2. **Review `email_client_distribution`** — high Gmail share means Apple MPP inflation is lower; high Apple Mail share means open rates are less reliable
+3. **Book specific sendouts** — use `upcoming_sendouts` to select editions that align with your campaign timeline
+4. **Respect `native_spec` constraints** — keep headline and body within character limits for clean rendering
+5. **Test dark mode** — if `dark_mode_support` is true, ensure your creative assets work in both light and dark themes
+6. **Use UTM parameters** — email has no cookie-based attribution; UTM parameters on click URLs are essential for conversion tracking
+
+### For Publishers
+
+1. **Populate `ext.newsletter` completely** — subscriber count, open rate, click rate, and send frequency help buyers evaluate your inventory
+2. **Keep `upcoming_sendouts` current** — buyers need to see available inventory windows; update sendout status as editions move through `scheduled` → `sending` → `sent`
+3. **Reflect actual availability** — when inventory is partially sold to direct or internal campaigns, set `available_impressions` on sendouts and omit fully booked placements from `available_placement_ids`. This prevents overbooking and builds buyer trust.
+4. **Report `by_sendout` in delivery** — per-edition breakdowns let buyers see which content contexts perform best
+5. **Declare `rendering_constraints`** on placements — file size limits, supported MIME types, and CSS requirements prevent creative rejection
+6. **Include `native_spec`** on native placements — character limits and layout IDs ensure buyer creatives render correctly
+7. **Set `channels: ["email"]`** and `property_type: "newsletter"` so buyers can filter by channel
+
+## Capability Declaration
+
+Newsletter seller agents declare their support for the newsletter extension through [`get_adcp_capabilities`](/docs/protocol/get_adcp_capabilities). This lets buyer agents know that `ext.newsletter` data will be present on products and delivery reports before they start browsing inventory:
+
+```json
+{
+  "adcp": {
+    "major_versions": [3]
+  },
+  "supported_protocols": ["media_buy"],
+  "extensions_supported": ["newsletter"],
+  "media_buy": {
+    "features": {
+      "inline_creative_management": true,
+      "property_targeting_allowed": false
+    },
+    "portfolio": {
+      "summary": "200+ email newsletters across technology, finance, health, and lifestyle categories. Double opt-in subscribers with 30-45% average open rates.",
+      "channels": ["email"],
+      "property_types": ["newsletter"]
+    }
+  }
+}
+```
+
+When a buyer agent probes a seller and sees `"newsletter"` in `extensions_supported`, it knows to expect subscriber counts, sendout schedules, open rates, and email client breakdowns in product and delivery data. The `portfolio` summary gives buyers a quick sense of scale and quality before calling `get_products`.
+
+## Guaranteed Delivery and Forecasts
+
+Newsletter inventory is inherently **guaranteed delivery** — the subscriber count is known, and ads are rendered at send time to every subscriber. This maps directly to AdCP's delivery forecast system with `method: "guaranteed"`:
+
+```json
+{
+  "product_id": "techdigest_native_sponsorship",
+  "delivery_type": "guaranteed",
+  "pricing_options": [
+    {
+      "pricing_option_id": "native_cpm",
+      "pricing_model": "cpm",
+      "fixed_price": 35.00,
+      "currency": "USD",
+      "delivery_measurement": {
+        "name": "Publisher email platform",
+        "notes": "Impressions counted when subscriber email client loads the creative image"
+      }
+    }
+  ],
+  "forecast": {
+    "method": "guaranteed",
+    "points": [
+      {
+        "budget": 2975,
+        "metrics": {
+          "impressions": { "low": 82000, "mid": 85000, "high": 85000 }
+        }
+      }
+    ],
+    "reach_unit": "individuals",
+    "valid_until": "2026-03-01T00:00:00Z"
+  }
+}
+```
+
+The `reach_unit: "individuals"` is significant — unlike web display where impressions may hit the same person multiple times, each newsletter sendout reaches a known set of unique subscribers. The `low` and `mid`/`high` range reflects potential bounce rate variation, but the forecast is much tighter than non-guaranteed web inventory.
+
+<Tip>
+Buyers should compare newsletter forecasts with web display forecasts. Newsletter `method: "guaranteed"` with `reach_unit: "individuals"` means the delivery is highly predictable. A $2,975 budget at $35 CPM guarantees ~85,000 impressions to unique subscribers — not estimates or modeled projections.
+</Tip>
+
+## Partial Inventory Availability
+
+Newsletter publishers often pre-sell part of their inventory to direct campaigns, house ads, or internal promotions. The remaining inventory is what they offer to external buyers through AdCP.
+
+The extension handles this at two levels:
+
+**Placement level** — If a placement is fully sold for a specific sendout, the publisher omits it from `available_placement_ids`. In the [native sponsorship example](#native-sponsored-content), the Feb 24 sendout lists only `["above_fold_native"]` because `mid_content_native` is already booked.
+
+**Impression level** — If a placement is partially sold, the publisher sets `available_impressions` on the sendout to indicate how many impressions remain. The Feb 24 sendout shows `expected_volume: 84200` (total subscribers) but `available_impressions: 42100` — the other half is reserved for a direct campaign.
+
+When `available_impressions` is omitted (like the Feb 25 sendout), all impressions from `expected_volume` are available.
+
+The delivery forecast on the product should reflect the available inventory, not total capacity:
+
+```json
+{
+  "forecast": {
+    "method": "guaranteed",
+    "points": [
+      {
+        "budget": 1473,
+        "metrics": {
+          "impressions": { "low": 40000, "mid": 42100, "high": 42100 }
+        }
+      }
+    ],
+    "reach_unit": "individuals",
+    "valid_until": "2026-02-24T00:00:00Z"
+  }
+}
+```
+
+This forecast is for the Feb 24 sendout only — it shows 42,100 available impressions at $35 CPM ($1,473 spend), not the full 84,200. The buyer agent sees exactly what it can buy.
+
+<Info>
+Inventory availability changes as the publisher books more campaigns. Buyer agents should check `upcoming_sendouts` close to the desired date for the most accurate availability. Products with `expires_at` set indicate time-sensitive availability — the buyer should act before the offer expires.
+</Info>
+
+## Creative Deduplication Across Placements
+
+A newsletter with multiple placements raises a question: can the same ad appear on more than one placement in the same sendout?
+
+Consider a daily tech newsletter with three placements — above-the-fold native, mid-content native, and footer banner. The publisher may want to:
+- **Allow the same ad everywhere** — an internal house campaign promoting a webinar can fill all three slots
+- **Require distinct ads** — external buyers should each get a unique slot, and subscribers should see variety
+- **Prefer variety but not enforce it** — smaller buyers with only one creative shouldn't be excluded
+
+The `creative_deduplication` field on `ext.newsletter` lets the publisher declare this policy:
+
+```json
+{
+  "ext": {
+    "newsletter": {
+      "subscriber_count": 85000,
+      "creative_deduplication": "required",
+      "upcoming_sendouts": [...]
+    }
+  }
+}
+```
+
+| Value | Behavior | Use Case |
+|---|---|---|
+| `"required"` | Each placement must show a distinct creative. The seller rejects media buys that assign the same creative to multiple placements. | Publishers who want to ensure variety for subscribers and give each buyer exclusive visibility |
+| `"preferred"` | Different creatives preferred but not enforced. The seller accepts duplicate creatives if the buyer has limited assets. | Publishers who value variety but don't want to lose bookings over it |
+| `"none"` | No restrictions. The same creative may appear on all placements. | Internal campaigns, house ads, or publishers who prioritize fill rate over variety |
+
+When `creative_deduplication` is omitted, the default is `"none"` — no restrictions.
+
+**How this works in practice:** A buyer agent booking two placements in the same newsletter sees `creative_deduplication: "required"` and knows it must assign a different creative to each placement in the `sync_creatives` call. If it only has one creative, it should book only one placement — or ask the buyer for additional assets.
+
+<Info>
+Creative deduplication is enforced **per sendout**, not across sendouts. The same creative can appear in Monday's edition and Tuesday's edition — the policy only prevents duplicates within a single email sent to subscribers.
+</Info>
+
+### Deduplication and Partial Availability
+
+Creative deduplication interacts with partial inventory. If a publisher has three placements but one is fully booked for a sendout (omitted from `available_placement_ids`), the deduplication policy applies only to the remaining available placements. A buyer booking the two available placements with `creative_deduplication: "required"` needs two distinct creatives — not three.
+
+## Subscriber Suppression with `sync_audiences`
+
+Buyers can use the [`sync_audiences`](/docs/media-buy/task-reference/sync_audiences) task to upload hashed customer lists for suppression — preventing ads from showing to people who have already converted:
+
+```json
+{
+  "audiences": [
+    {
+      "audience_id": "existing_customers",
+      "name": "Acme Cloud - Existing Customers",
+      "action": "create",
+      "match_type": "sha256_email",
+      "members": [
+        { "id": "a3f2b8c1d4e5..." },
+        { "id": "b7e9d0f3a2c1..." }
+      ]
+    }
+  ]
+}
+```
+
+Once the audience is matched and ready, reference it in `create_media_buy` as a suppression list:
+
+```json
+{
+  "packages": [
+    {
+      "product_id": "techdigest_native_sponsorship",
+      "pricing_option_id": "native_cpm",
+      "budget": 3000,
+      "targeting_overlay": {
+        "audience_exclude": ["existing_customers"]
+      }
+    }
+  ]
+}
+```
+
+This is particularly effective for newsletters because the matching uses hashed email addresses — and the publisher already has subscriber emails. The match rate between buyer customer lists and newsletter subscriber lists is typically much higher than cookie-based web matching.
+
+<Info>
+All PII is SHA-256 hashed before transmission. The publisher never receives cleartext email addresses — they hash their own subscriber list independently and match against the buyer's hashed identifiers.
+</Info>
+
+## Newsletter Discovery
+
+Newsletter discovery works differently from web properties. A website is always reachable at its domain, so `adagents.json` at `/.well-known/adagents.json` is a natural fit. Newsletters don't always have a website — and even when they do, the "property" is an email list, not a URL.
+
+AdCP supports three discovery patterns for newsletters:
+
+### Pattern 1: Publisher Domain with `adagents.json`
+
+When the newsletter publisher has a website, they declare their newsletter as a property with `property_type: "newsletter"` in `adagents.json`:
+
+```json
+{
+  "$schema": "https://adcontextprotocol.org/schemas/v2/adagents.json",
+  "contact": {
+    "name": "Tech Digest",
+    "email": "ads@techdigest.io",
+    "domain": "techdigest.io"
+  },
+  "properties": [
+    {
+      "property_id": "tech_digest_daily",
+      "property_type": "newsletter",
+      "name": "Tech Digest Daily",
+      "identifiers": [
+        { "type": "domain", "value": "techdigest.io" },
+        { "type": "newsletter_id", "value": "tech_digest_daily" }
+      ],
+      "supported_channels": ["email"],
+      "tags": ["technology", "startups"],
+      "publisher_domain": "techdigest.io"
+    }
+  ],
+  "authorized_agents": [
+    {
+      "url": "https://ads.techdigest.io",
+      "authorized_for": "Newsletter ad sales for Tech Digest Daily",
+      "authorization_type": "property_ids",
+      "property_ids": ["tech_digest_daily"]
+    }
+  ],
+  "last_updated": "2026-02-20T12:00:00Z"
+}
+```
+
+This works well for independent publishers who operate their own sales agent and have an established domain.
+
+### Pattern 2: Platform Agent via Registry
+
+Many newsletters don't operate their own ad infrastructure. They use a platform — like an ad network or newsletter monetization service — that acts as a single seller agent representing many newsletters. The platform registers once in the [AdCP Registry](/docs/registry/index) and buyer agents discover all its newsletters through one connection:
+
+```json
+{
+  "$schema": "https://adcontextprotocol.org/schemas/v2/adagents.json",
+  "contact": {
+    "name": "Newsletter Ad Platform",
+    "email": "adops@platform.com",
+    "domain": "platform.com"
+  },
+  "properties": [
+    {
+      "property_id": "nl_001",
+      "property_type": "newsletter",
+      "name": "Tech Digest Daily",
+      "identifiers": [
+        { "type": "domain", "value": "techdigest.io" },
+        { "type": "newsletter_id", "value": "nl_001" }
+      ],
+      "supported_channels": ["email"],
+      "tags": ["technology"],
+      "publisher_domain": "techdigest.io"
+    },
+    {
+      "property_id": "nl_002",
+      "property_type": "newsletter",
+      "name": "Finance Weekly",
+      "identifiers": [
+        { "type": "newsletter_id", "value": "nl_002" }
+      ],
+      "supported_channels": ["email"],
+      "tags": ["finance"],
+      "publisher_domain": "finweekly.com"
+    },
+    {
+      "property_id": "nl_003",
+      "property_type": "newsletter",
+      "name": "Health News Daily",
+      "identifiers": [
+        { "type": "newsletter_id", "value": "nl_003" }
+      ],
+      "supported_channels": ["email"],
+      "tags": ["health"],
+      "publisher_domain": "healthnewsdaily.com"
+    }
+  ],
+  "authorized_agents": [
+    {
+      "url": "https://ads.platform.com",
+      "authorized_for": "Newsletter ad sales across all platform publishers",
+      "authorization_type": "property_tags",
+      "property_tags": ["technology", "finance", "health"]
+    }
+  ],
+  "last_updated": "2026-02-20T12:00:00Z"
+}
+```
+
+The buyer agent finds the platform in the registry, connects to one agent URL, and calls `get_products` to browse the entire newsletter portfolio.
+
+### Pattern 3: Registry-Only (No Domain)
+
+Some newsletters have no website at all — they exist only as an email publication (e.g., a Substack or Beehiiv newsletter with no custom domain). In this case, the platform agent registers the newsletters directly in the AdCP Registry. No `adagents.json` file is needed on any domain.
+
+The buyer agent discovers these newsletters by querying the registry:
+
+```
+GET /api/registry/agents?property_type=newsletter&channel=email
+```
+
+The registry returns platform agents that represent newsletter inventory. The buyer agent then connects to each and calls `get_products` with `channels: ["email"]` to browse available newsletters.
+
+<Info>
+For newsletters without their own domain, the platform agent is the sole discovery path. This makes the AdCP Registry — not `adagents.json` — the primary discovery mechanism for newsletter inventory. The registry should support filtering by `property_type: "newsletter"` and `channel: "email"` to enable efficient newsletter discovery.
+</Info>
+
+### Discovery Pattern Comparison
+
+| Pattern | When to Use | `adagents.json` Required | Registry Required |
+|---|---|---|---|
+| Publisher domain | Independent publisher with website and own ad sales | Yes (on publisher domain) | Optional but recommended |
+| Platform agent | Publisher uses a monetization platform | Yes (on platform domain) | Yes (for buyer discovery) |
+| Registry-only | Newsletter has no website or custom domain | No | Yes (sole discovery path) |
+
+### Audience-First Discovery via Signals Protocol
+
+The most effective way for buyer agents to discover newsletter inventory is not to search for newsletters specifically — it's to search for **audiences**. AdCP's [Signals Protocol](/docs/signals/overview) already enables this through natural language audience discovery.
+
+A buyer agent with the goal "reach tech decision-makers in the US" uses the `get_signals` task to find audience segments across all channels — without specifying a channel upfront:
+
+```json
+{
+  "tool": "get_signals",
+  "arguments": {
+    "signal_spec": "Tech decision-makers interested in software and SaaS products",
+    "deliver_to": {
+      "deployments": [
+        { "type": "agent", "agent_url": "https://ads.passendo.com" },
+        { "type": "agent", "agent_url": "https://ads.webnetwork.com" }
+      ],
+      "countries": ["US"]
+    }
+  }
+}
+```
+
+The Signals Protocol returns matching audience segments with deployment status, pricing, and coverage — letting the buyer agent compare newsletter audiences alongside web, app, and podcast audiences. Newsletters win on engagement quality (42% open rates, double opt-in subscribers) rather than being explicitly requested.
+
+<Tip>
+Audience-first discovery means newsletters don't need to be explicitly requested. A buyer agent that has never considered email advertising will naturally discover newsletters when they outperform other channels for the target audience. The existing Signals Protocol enables this without any Registry changes — newsletter seller agents simply need to be registered as signal deployment targets.
+</Tip>
+
+## Related Documentation
+
+- [Email Creative Channel](/docs/creative/channels/email) — Email rendering constraints, format specifications, and dark mode considerations
+- [AdCP Registry](/docs/registry/index) — Agent registration and discovery
+- [Property Governance](/docs/governance/property/index) — `adagents.json` specification and property authorization
+- [Media Channel Taxonomy](/docs/reference/media-channel-taxonomy) — `email` channel definition
+- [Media Products](/docs/media-buy/product-discovery/media-products) — Product model reference
+- [Creative Formats](/docs/creative/formats) — Format specification and asset types
+- [Creative Manifests](/docs/creative/creative-manifests) — Manifest structure for creative delivery
+- [Delivery Reporting](/docs/media-buy/task-reference/get_media_buy_delivery) — Standard delivery metrics
+- [Pricing Models](/docs/media-buy/advanced-topics/pricing-models) — CPM, flat rate pricing details
+- [Capability Discovery](/docs/protocol/get_adcp_capabilities) — How agents declare supported extensions
+- [Signals Protocol](/docs/signals/overview) — Audience-first signal discovery and activation
+- [Audience Sync](/docs/media-buy/task-reference/sync_audiences) — Customer list upload for retargeting and suppression
