@@ -1,5 +1,6 @@
 import express from "express";
 import cookieParser from "cookie-parser";
+import escapeHtml from "escape-html";
 import * as fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -48,9 +49,11 @@ import {
 import { createAdminRouter } from "./routes/admin.js";
 import { createAdminInsightsRouter } from "./routes/admin-insights.js";
 import { createAdminOutboundRouter } from "./routes/admin-outbound.js";
+import { markLinkAccountGoalsSucceeded } from "./db/outbound-db.js";
 import { createAddieAdminRouter } from "./routes/addie-admin.js";
 import { createMoltbookAdminRouter } from "./routes/moltbook-admin.js";
 import { createAddieChatRouter } from "./routes/addie-chat.js";
+import { createTavusRouter } from "./routes/tavus.js";
 import { createSiChatRoutes } from "./routes/si-chat.js";
 import { sendAccountLinkedMessage, invalidateMemberContextCache, isAddieBoltReady } from "./addie/index.js";
 import { invalidateMembershipCache } from "./db/org-filters.js";
@@ -74,6 +77,7 @@ import { createContentRouter, createMyContentRouter } from "./routes/content.js"
 import { createMeetingRouters } from "./routes/meetings.js";
 import { createMemberProfileRouter, createAdminMemberProfileRouter } from "./routes/member-profiles.js";
 import { createCommunityRouters } from "./routes/community.js";
+import { createCertificationRouters } from "./routes/certification.js";
 import { createEngagementRouter } from "./routes/engagement.js";
 import { createNotificationRouter } from "./routes/notifications.js";
 import { CommunityDatabase } from "./db/community-db.js";
@@ -83,6 +87,8 @@ import { createAgentOAuthRouter } from "./routes/agent-oauth.js";
 import { createRegistryApiRouter } from "./routes/registry-api.js";
 import { getCachedLogo, isAllowedLogoContentType } from "./services/logo-cdn.js";
 import { createApiKeysRouter } from "./routes/api-keys.js";
+import { createTrainingAgentRouter } from "./training-agent/index.js";
+import { createCreativeAgentRouter } from "./creative-agent/index.js";
 import { sendWelcomeEmail, sendUserSignupEmail, emailDb } from "./notifications/email.js";
 import { emailPrefsDb } from "./db/email-preferences-db.js";
 import { queuePerspectiveLink } from "./addie/services/content-curator.js";
@@ -638,6 +644,7 @@ export class HTTPServer {
           }
         });
       } catch (error) {
+        logger.error({ err: error }, 'Failed to list schema versions');
         res.status(500).json({ error: "Failed to list schema versions" });
       }
     });
@@ -692,7 +699,7 @@ export class HTTPServer {
       // Skip paths that have their own route handlers which manage auth and config injection
       // (e.g. /dashboard injects isManage; /manage requires kitchen-cabinet auth;
       // /agents does content negotiation to serve HTML or JSON)
-      if (urlPath.startsWith('/manage') || urlPath.startsWith('/dashboard') || urlPath === '/agents') {
+      if (urlPath.startsWith('/manage') || urlPath.startsWith('/dashboard') || urlPath === '/agents' || urlPath === '/chat') {
         return next();
       }
 
@@ -711,6 +718,10 @@ export class HTTPServer {
       try {
         // Check if file exists
         await fs.access(filePath);
+
+        // Cross-domain session bridge: if on AdCP without a session cookie,
+        // redirect through AAO to pick up the session (if one exists).
+        if (this.bridgeIfNeeded(req, res)) return;
 
         // Get user from session (if authenticated), passing res to update cookie if session is refreshed
         const user = await getUserFromRequest(req, res);
@@ -743,11 +754,40 @@ export class HTTPServer {
   }
 
 
+  // Allowed AdCP hostnames (exact match for security)
+  private static readonly ADCP_HOSTNAMES = new Set([
+    'adcontextprotocol.org',
+    'www.adcontextprotocol.org',
+  ]);
+
+  private static readonly BRIDGE_CHECK_TTL = 10 * 60 * 1000; // 10 minutes
+
   // Helper to check if request is from adcontextprotocol.org (requires redirect to AAO for auth)
   // Session cookies are scoped to agenticadvertising.org, so auth pages on AdCP must redirect
   private isAdcpDomain(req: express.Request): boolean {
     const hostname = req.hostname || '';
-    return hostname.includes('adcontextprotocol') && !hostname.includes('localhost');
+    return HTTPServer.ADCP_HOSTNAMES.has(hostname);
+  }
+
+  // Validate that a URL points to an allowed AdCP domain (prevents open redirect)
+  private static isAllowedAdcpUrl(url: string): boolean {
+    try {
+      const parsed = new URL(url);
+      return HTTPServer.ADCP_HOSTNAMES.has(parsed.hostname);
+    } catch {
+      return false;
+    }
+  }
+
+  // Redirect through AAO session bridge if on AdCP without a session cookie.
+  // Returns true if a redirect was issued (caller should return early).
+  private bridgeIfNeeded(req: express.Request, res: express.Response): boolean {
+    if (this.isAdcpDomain(req) && !req.cookies?.['wos-session'] && !req.cookies?.['bridge-checked']) {
+      const currentUrl = `https://${req.hostname}${req.originalUrl}`;
+      res.redirect(`https://agenticadvertising.org/auth/bridge?return_to=${encodeURIComponent(currentUrl)}`);
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -762,6 +802,9 @@ export class HTTPServer {
     const filePath = path.join(publicPath, htmlFile);
 
     try {
+      // Cross-domain session bridge for AdCP pages
+      if (this.bridgeIfNeeded(req, res)) return;
+
       // Get user from session (if authenticated), passing res to update cookie if session is refreshed
       const user = await getUserFromRequest(req, res);
       await enrichUserWithMembership(user);
@@ -817,8 +860,8 @@ export class HTTPServer {
 
     // Mount admin routes
     const { pageRouter, apiRouter } = createAdminRouter();
-    this.app.use('/admin', pageRouter);      // Page routes: /admin/prospects
-    this.app.use('/api/admin', apiRouter);   // API routes: /api/admin/prospects
+    this.app.use('/admin', pageRouter);      // Page routes: /admin/*
+    this.app.use('/api/admin', apiRouter);   // API routes: /api/admin/accounts, etc.
 
     // Mount admin insights routes (member insights, goals, outreach)
     const { pageRouter: insightsPageRouter, apiRouter: insightsApiRouter } = createAdminInsightsRouter();
@@ -844,6 +887,12 @@ export class HTTPServer {
     const { pageRouter: chatPageRouter, apiRouter: chatApiRouter } = createAddieChatRouter();
     this.app.use('/chat', chatPageRouter);              // Page routes: /chat
     this.app.use('/api/addie/chat', chatApiRouter);     // API routes: /api/addie/chat
+
+    // Mount Tavus video routes (Addie video chat + OpenAI-compatible LLM endpoint)
+    const { pageRouter: videoPageRouter, apiRouter: videoApiRouter, llmRouter: videoLlmRouter } = createTavusRouter();
+    this.app.use('/video', videoPageRouter);            // Page routes: /video
+    this.app.use('/api/addie/video', videoApiRouter);   // API routes: /api/addie/video/session
+    this.app.use('/api/addie/v1', videoLlmRouter);      // LLM routes: /api/addie/v1/chat/completions
 
     // Mount SI (Sponsored Intelligence) chat routes
     const { apiRouter: siChatApiRouter } = createSiChatRoutes();
@@ -985,6 +1034,13 @@ export class HTTPServer {
     this.app.use('/api/community', communityPublicRouter);
     this.app.use('/api/me', communityUserRouter);
 
+    // Mount certification routes
+    const { publicRouter: certPublicRouter, userRouter: certUserRouter, orgRouter: certOrgRouter, adminRouter: certAdminRouter } = createCertificationRouters();
+    this.app.use('/api/certification', certPublicRouter);
+    this.app.use('/api/me', certUserRouter);
+    this.app.use('/api/organizations', certOrgRouter);
+    this.app.use('/api/admin/certification', certAdminRouter);
+
     // Mount engagement dashboard route
     const orgKnowledgeDb = new OrgKnowledgeDatabase();
     const workingGroupDb = new WorkingGroupDatabase();
@@ -996,6 +1052,12 @@ export class HTTPServer {
 
     // Mount API key management routes
     this.app.use('/api/me/api-keys', createApiKeysRouter());
+
+    // Mount training agent (embedded AdCP sales agent for testing and certification)
+    this.app.use('/api/training-agent', createTrainingAgentRouter());
+
+    // Mount reference creative agent (canonical format definitions and preview rendering)
+    this.app.use('/api/creative-agent', createCreativeAgentRouter());
 
     // Mount events routes
     const { pageRouter: eventsPageRouter, adminApiRouter: eventsAdminApiRouter, publicApiRouter: eventsPublicApiRouter } = createEventsRouter();
@@ -1510,6 +1572,7 @@ export class HTTPServer {
     });
     this.app.get('/dashboard/emails', (req, res) => serveDashboardPage(req, res, 'dashboard-emails.html'));
     this.app.get('/dashboard/api-keys', (req, res) => serveDashboardPage(req, res, 'dashboard-api-keys.html'));
+    this.app.get('/dashboard/addie', (_req, res) => res.redirect('/chat'));
 
     // My Content - unified CMS for all authenticated users
     this.app.get('/my-content', async (req, res) => {
@@ -1587,6 +1650,7 @@ export class HTTPServer {
         const result = await this.validator.validate(domain, agent_url);
         res.json(result);
       } catch (error) {
+        logger.error({ err: error, domain, agent_url }, 'Validation failed');
         res.status(500).json({
           error: error instanceof Error ? error.message : "Validation failed",
         });
@@ -1657,6 +1721,7 @@ export class HTTPServer {
         const profile = await this.capabilityDiscovery.discoverCapabilities(agent);
         res.json(profile);
       } catch (error) {
+        logger.error({ err: error, agentId }, 'Capability discovery failed');
         res.status(500).json({
           error: error instanceof Error ? error.message : "Capability discovery failed",
         });
@@ -1672,6 +1737,7 @@ export class HTTPServer {
           profiles: Array.from(profiles.values()),
         });
       } catch (error) {
+        logger.error({ err: error, agentCount: agents.length }, 'Bulk capability discovery failed');
         res.status(500).json({
           error: error instanceof Error ? error.message : "Bulk discovery failed",
         });
@@ -2467,12 +2533,12 @@ export class HTTPServer {
     });
 
     // GET /brand/view/:domain - Brand viewer page (wildcard captures dots in domain names)
-    this.app.get('/brand/view/:domain(*)', async (req, res) => {
+    this.app.get('/brand/view/*domain', async (req, res) => {
       await this.serveHtmlWithConfig(req, res, 'brand-viewer.html');
     });
 
     // GET /property/view/:domain - Property viewer page (wildcard captures dots in domain names)
-    this.app.get('/property/view/:domain(*)', async (req, res) => {
+    this.app.get('/property/view/*domain', async (req, res) => {
       await this.serveHtmlWithConfig(req, res, 'property-viewer.html');
     });
 
@@ -3974,15 +4040,20 @@ export class HTTPServer {
       this.serveHtmlWithConfig(req, res, 'manage.html'));
     this.app.get('/manage/referrals', requireAuth, requireManage, (req, res) =>
       this.serveHtmlWithConfig(req, res, 'manage-referrals.html'));
-    this.app.get('/manage/prospects', requireAuth, requireManage, (req, res) =>
-      this.serveHtmlWithConfig(req, res, 'manage-prospects.html'));
-    this.app.get('/manage/accounts', requireAuth, (req, res) => res.redirect(302, '/admin/accounts'));
+    this.app.get('/manage/prospects', requireAuth, (req, res) => res.redirect(301, '/manage/accounts'));
+    this.app.get('/manage/accounts', requireAuth, requireManage, (req, res) =>
+      this.serveHtmlWithConfig(req, res, 'manage-accounts.html'));
+    this.app.get('/manage/accounts/:orgId', requireAuth, requireManage, (req, res) =>
+      this.serveHtmlWithConfig(req, res, 'admin-account-detail.html'));
     this.app.get('/manage/analytics', requireAuth, requireManage, (req, res) =>
       this.serveHtmlWithConfig(req, res, 'manage-analytics.html'));
+    this.app.get('/manage/geo', requireAuth, requireManage, (req, res) =>
+      this.serveHtmlWithConfig(req, res, 'manage-geo.html'));
 
     // Redirect moved admin pages to their new /manage paths
-    this.app.get('/admin/prospects', (req, res) => res.redirect(302, '/manage/prospects'));
+    this.app.get('/admin/prospects', (req, res) => res.redirect(301, '/manage/accounts'));
     this.app.get('/admin/analytics', (req, res) => res.redirect(302, '/manage/analytics'));
+    this.app.get('/admin/geo', (req, res) => res.redirect(301, '/manage/geo'));
 
     // Admin routes
     // GET /admin - Admin landing page
@@ -4939,6 +5010,10 @@ Disallow: /api/admin/
       await this.serveHtmlWithConfig(req, res, 'admin-escalations.html');
     });
 
+    this.app.get('/admin/certification', requireAuth, requireAdmin, async (req, res) => {
+      await this.serveHtmlWithConfig(req, res, 'admin-certification.html');
+    });
+
   }
 
   private setupAuthRoutes(): void {
@@ -4961,13 +5036,14 @@ Disallow: /api/admin/
         }
 
         // If on AdCP domain, redirect to AAO for login (keeps cookies on single domain)
+        // Preserve the AdCP URL as return_to so the session bridge sends them back to AdCP after login
         if (this.isAdcpDomain(req)) {
           const returnTo = req.query.return_to as string;
           const slackUserId = req.query.slack_user_id as string;
-          // Rewrite return_to to AAO domain if it's a relative URL
+          // Keep the return_to as an AdCP URL so the callback bridges the session back
           let aaoReturnTo = returnTo;
           if (returnTo && returnTo.startsWith('/')) {
-            aaoReturnTo = `https://agenticadvertising.org${returnTo}`;
+            aaoReturnTo = `https://${req.get('host')}${returnTo}`;
           }
           let redirectUrl = 'https://agenticadvertising.org/auth/login';
           const params = new URLSearchParams();
@@ -5149,6 +5225,26 @@ Disallow: /api/admin/
 
         logger.info({ userId: user.id }, 'User authenticated via OAuth callback');
 
+        // Ensure user exists in local users table (webhooks may have been missed).
+        // WorkOS is the source of truth for name/email — always sync on login.
+        try {
+          const pool = getPool();
+          await pool.query(
+            `INSERT INTO users (workos_user_id, email, first_name, last_name, email_verified, workos_created_at, workos_updated_at, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+             ON CONFLICT (workos_user_id) DO UPDATE SET
+               email = EXCLUDED.email,
+               first_name = EXCLUDED.first_name,
+               last_name = EXCLUDED.last_name,
+               email_verified = EXCLUDED.email_verified,
+               workos_updated_at = EXCLUDED.workos_updated_at,
+               updated_at = NOW()`,
+            [user.id, user.email, user.firstName, user.lastName, user.emailVerified, user.createdAt, user.updatedAt]
+          );
+        } catch (upsertError) {
+          logger.error({ error: upsertError, userId: user.id }, 'Failed to upsert user on login');
+        }
+
         // Check if user needs to accept (or re-accept) ToS and Privacy Policy
         // This happens when:
         // 1. User has never accepted them, OR
@@ -5314,6 +5410,8 @@ Disallow: /api/admin/
             const slackDb = new SlackDatabase();
             const existingMapping = await slackDb.getBySlackUserId(slackUserIdToLink);
 
+            let accountLinked = false;
+
             if (existingMapping && !existingMapping.workos_user_id) {
               // Link the Slack user to the newly authenticated WorkOS user
               await slackDb.mapUser({
@@ -5321,6 +5419,7 @@ Disallow: /api/admin/
                 workos_user_id: user.id,
                 mapping_source: 'user_claimed',
               });
+              accountLinked = true;
               logger.info(
                 { slackUserId: slackUserIdToLink, workosUserId: user.id },
                 'Auto-linked Slack account after signup'
@@ -5356,11 +5455,30 @@ Disallow: /api/admin/
                 { slackUserId: slackUserIdToLink },
                 'Slack user not found in mapping table, skipping auto-link'
               );
+            } else if (existingMapping.workos_user_id === user.id) {
+              // Already correctly linked — user clicked the link again.
+              // We still mark the goal as success (below) but don't re-send the
+              // "you're now linked" Addie message to avoid duplicate notifications.
+              accountLinked = true;
+              logger.debug(
+                { slackUserId: slackUserIdToLink, workosUserId: user.id },
+                'Slack account already linked to this WorkOS user'
+              );
             } else {
               logger.debug(
                 { slackUserId: slackUserIdToLink, existingWorkosId: existingMapping.workos_user_id },
                 'Slack user already mapped to different WorkOS user'
               );
+            }
+
+            // Mark any pending Link Account outreach goals as succeeded so Addie stops re-sending
+            if (accountLinked) {
+              try {
+                await markLinkAccountGoalsSucceeded(slackUserIdToLink);
+              } catch (historyError) {
+                logger.warn({ error: historyError, slackUserId: slackUserIdToLink }, 'Failed to mark Link Account goal as success');
+              }
+              invalidateMemberContextCache(slackUserIdToLink);
             }
           } catch (linkError) {
             // Log but don't fail authentication if linking fails
@@ -5380,6 +5498,16 @@ Disallow: /api/admin/
                   { workosUserId: user.id, slackUserId: linkResult.slack_user_id },
                   'Email-based auto-link on login'
                 );
+
+                // Mark any pending "Link Account" goals as succeeded
+                if (linkResult.slack_user_id) {
+                  try {
+                    await markLinkAccountGoalsSucceeded(linkResult.slack_user_id);
+                  } catch (historyError) {
+                    logger.warn({ error: historyError, slackUserId: linkResult.slack_user_id }, 'Failed to mark Link Account goal as success after email auto-link');
+                  }
+                  invalidateMemberContextCache(linkResult.slack_user_id);
+                }
               }
             }
           } catch (linkError) {
@@ -5393,6 +5521,20 @@ Disallow: /api/admin/
           logger.debug('No organizations found, redirecting to onboarding');
           res.redirect('/onboarding.html');
         } else {
+          // If returnTo is an AdCP URL, bridge the session via auto-submitting form POST
+          // so the user lands on AdCP already authenticated (session stays out of URL)
+          if (HTTPServer.isAllowedAdcpUrl(returnTo) && sealedSession) {
+            const bridgeUrl = new URL('/auth/bridge-callback', returnTo);
+            bridgeUrl.searchParams.set('return_to', returnTo);
+            logger.debug({ returnTo }, 'Bridging session to AdCP domain');
+            const html = `<!DOCTYPE html><html><body>
+              <form id="f" method="POST" action="${escapeHtml(bridgeUrl.toString())}">
+                <input type="hidden" name="_session" value="${escapeHtml(sealedSession)}" />
+              </form>
+              <script>document.getElementById('f').submit();</script>
+            </body></html>`;
+            return res.type('html').send(html);
+          }
           logger.debug({ returnTo }, 'Redirecting authenticated user');
           res.redirect(returnTo);
         }
@@ -5448,8 +5590,14 @@ Disallow: /api/admin/
           }
         }
 
-        // Clear the cookie - must match the options used when setting it
+        // Clear the session and bridge-checked cookies
         res.clearCookie('wos-session', {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production' && !ALLOW_INSECURE_COOKIES,
+          sameSite: 'lax',
+          path: '/',
+        });
+        res.clearCookie('bridge-checked', {
           httpOnly: true,
           secure: process.env.NODE_ENV === 'production' && !ALLOW_INSECURE_COOKIES,
           sameSite: 'lax',
@@ -5458,8 +5606,14 @@ Disallow: /api/admin/
         res.redirect('/');
       } catch (error) {
         logger.error({ err: error }, 'Error during logout');
-        // Still clear the cookie and redirect even if revocation failed
+        // Still clear cookies and redirect even if revocation failed
         res.clearCookie('wos-session', {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production' && !ALLOW_INSECURE_COOKIES,
+          sameSite: 'lax',
+          path: '/',
+        });
+        res.clearCookie('bridge-checked', {
           httpOnly: true,
           secure: process.env.NODE_ENV === 'production' && !ALLOW_INSECURE_COOKIES,
           sameSite: 'lax',
@@ -5467,6 +5621,90 @@ Disallow: /api/admin/
         });
         res.redirect('/');
       }
+    });
+
+    // GET /auth/bridge - Cross-domain session bridge (called on AAO domain)
+    // When a user visits AdCP without a session cookie, they're redirected here.
+    // If they have a session on AAO, we redirect back to AdCP with the sealed session
+    // so AdCP can set its own cookie.
+    this.app.get('/auth/bridge', async (req, res) => {
+      const returnTo = req.query.return_to as string;
+      if (!returnTo || !HTTPServer.isAllowedAdcpUrl(returnTo)) {
+        return res.status(400).send('Invalid or missing return_to parameter');
+      }
+
+      const sessionCookie = req.cookies?.['wos-session'];
+      const bridgeCallbackUrl = new URL('/auth/bridge-callback', returnTo);
+      bridgeCallbackUrl.searchParams.set('return_to', returnTo);
+
+      if (sessionCookie) {
+        // Render a self-submitting form to POST the session (keeps it out of URL/logs/Referrer)
+        const html = `<!DOCTYPE html><html><body>
+          <form id="f" method="POST" action="${escapeHtml(bridgeCallbackUrl.toString())}">
+            <input type="hidden" name="_session" value="${escapeHtml(sessionCookie)}" />
+          </form>
+          <script>document.getElementById('f').submit();</script>
+        </body></html>`;
+        return res.type('html').send(html);
+      }
+
+      res.redirect(bridgeCallbackUrl.toString());
+    });
+
+    // POST /auth/bridge-callback - Receives session from AAO bridge via form POST
+    this.app.post('/auth/bridge-callback', express.urlencoded({ extended: false }), (req, res) => {
+      // CSRF protection: verify the form POST originated from AAO
+      const origin = req.get('origin') || '';
+      if (origin && !origin.endsWith('agenticadvertising.org')) {
+        return res.status(403).send('Invalid origin');
+      }
+
+      const returnTo = req.query.return_to as string || '/';
+      if (returnTo !== '/' && !HTTPServer.isAllowedAdcpUrl(returnTo)) {
+        return res.status(400).send('Invalid return_to parameter');
+      }
+
+      const sessionData = req.body?._session as string;
+      if (sessionData) {
+        // Set the session cookie on this domain (AdCP)
+        res.cookie('wos-session', sessionData, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production' && !ALLOW_INSECURE_COOKIES,
+          sameSite: 'lax',
+          path: '/',
+          maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+        });
+      }
+
+      // Set bridge-checked cookie to prevent redirect loops (10 min TTL)
+      res.cookie('bridge-checked', '1', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production' && !ALLOW_INSECURE_COOKIES,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: HTTPServer.BRIDGE_CHECK_TTL,
+      });
+
+      res.redirect(returnTo);
+    });
+
+    // GET /auth/bridge-callback - Handles no-session case (redirect back from bridge without session)
+    this.app.get('/auth/bridge-callback', (req, res) => {
+      const returnTo = req.query.return_to as string || '/';
+      if (returnTo !== '/' && !HTTPServer.isAllowedAdcpUrl(returnTo)) {
+        return res.status(400).send('Invalid return_to parameter');
+      }
+
+      // Set bridge-checked cookie to prevent redirect loops (10 min TTL)
+      res.cookie('bridge-checked', '1', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production' && !ALLOW_INSECURE_COOKIES,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: HTTPServer.BRIDGE_CHECK_TTL,
+      });
+
+      res.redirect(returnTo);
     });
 
     // GET /api/me - Get current user info
@@ -5547,6 +5785,16 @@ Disallow: /api/admin/
         const isAdmin = adminEmails.includes(user.email.toLowerCase());
         const isManage = isAdmin || await isWebUserAAOCouncil(user.id);
 
+        // Check Slack sync status
+        let isLinkedToSlack = false;
+        try {
+          const slackDb = new SlackDatabase();
+          const slackMapping = await slackDb.getByWorkosUserId(user.id);
+          isLinkedToSlack = !!slackMapping?.slack_user_id;
+        } catch {
+          // Default to not linked if lookup fails
+        }
+
         // Build response with optional impersonation info
         const response: Record<string, unknown> = {
           user: {
@@ -5556,6 +5804,7 @@ Disallow: /api/admin/
             last_name: user.lastName,
             isAdmin,
             isManage,
+            isLinkedToSlack,
           },
           organizations,
         };
@@ -5857,54 +6106,32 @@ Disallow: /api/admin/
           });
         }
 
-        // If user has a company domain, find orgs with admins from the same domain
+        // If user has a company domain, find orgs with a matching verified domain
         if (userDomain) {
-          // Get all organizations
-          const allOrgs = await workos!.organizations.listOrganizations({ limit: 100 });
+          const pool = getPool();
+          const domainOrgs = await pool.query<{ workos_organization_id: string; name: string }>(
+            `SELECT o.workos_organization_id, o.name
+             FROM organization_domains od
+             JOIN organizations o ON o.workos_organization_id = od.workos_organization_id
+             WHERE od.domain = $1 AND od.verified = true AND o.is_personal = false`,
+            [userDomain]
+          );
 
-          for (const org of allOrgs.data) {
-            // Skip if user is already a member or if org is already in list
-            if (userOrgIds.has(org.id) || joinableOrgs.some(o => o.organization_id === org.id)) {
+          for (const org of domainOrgs.rows) {
+            if (userOrgIds.has(org.workos_organization_id) || joinableOrgs.some(o => o.organization_id === org.workos_organization_id)) {
               continue;
             }
 
-            // Get org's members to check admin domains
-            try {
-              const orgMemberships = await workos!.userManagement.listOrganizationMemberships({
-                organizationId: org.id,
-              });
+            const profile = await memberDb.getProfileByOrgId(org.workos_organization_id);
 
-              // Check if any admin/owner has the same company domain
-              const hasMatchingAdmin = orgMemberships.data.some(membership => {
-                const role = membership.role?.slug || 'member';
-                if (role !== 'admin' && role !== 'owner') {
-                  return false;
-                }
-                const memberEmail = membership.user?.email;
-                if (!memberEmail) {
-                  return false;
-                }
-                const memberDomain = getCompanyDomain(memberEmail);
-                return memberDomain === userDomain;
-              });
-
-              if (hasMatchingAdmin) {
-                // Try to get the member profile for logo/tagline
-                const profile = await memberDb.getProfileByOrgId(org.id);
-
-                joinableOrgs.push({
-                  organization_id: org.id,
-                  name: org.name,
-                  logo_url: profile?.resolved_brand?.logo_url || null,
-                  tagline: profile?.tagline || null,
-                  match_reason: 'domain',
-                  request_pending: pendingOrgIds.has(org.id),
-                });
-              }
-            } catch (error) {
-              // Skip orgs we can't get memberships for
-              logger.debug({ orgId: org.id, err: error }, 'Could not check org memberships');
-            }
+            joinableOrgs.push({
+              organization_id: org.workos_organization_id,
+              name: org.name,
+              logo_url: profile?.resolved_brand?.logo_url || null,
+              tagline: profile?.tagline || null,
+              match_reason: 'domain',
+              request_pending: pendingOrgIds.has(org.workos_organization_id),
+            });
           }
         }
 
@@ -5961,10 +6188,21 @@ Disallow: /api/admin/
 
           if (verifiedDomainResult.rows.length > 0) {
             // Domain is verified - auto-add user to organization
+            // If org has no admin/owner yet, promote this user to owner
+            const existingMembers = await workos!.userManagement.listOrganizationMemberships({
+              organizationId: organization_id,
+              limit: 100,
+            });
+            const hasAdmin = existingMembers.data.some((m) => {
+              const role = m.role?.slug;
+              return role === 'admin' || role === 'owner';
+            });
+            const roleSlug = hasAdmin ? 'member' : 'owner';
+
             const membership = await workos!.userManagement.createOrganizationMembership({
               userId: user.id,
               organizationId: organization_id,
-              roleSlug: 'member',
+              roleSlug,
             });
 
             // Get org name for response
@@ -5980,7 +6218,16 @@ Disallow: /api/admin/
               userId: user.id,
               orgId: organization_id,
               domain: userDomain,
+              role: roleSlug,
             }, 'User auto-added to organization via verified domain');
+
+            // Mirror membership locally so it's visible immediately
+            const pool2 = getPool();
+            await pool2.query(`
+              INSERT INTO organization_memberships (workos_user_id, workos_organization_id, email, role, created_at, updated_at, synced_at)
+              VALUES ($1, $2, $3, $4, NOW(), NOW(), NOW())
+              ON CONFLICT (workos_user_id, workos_organization_id) DO UPDATE SET role = $4, updated_at = NOW()
+            `, [user.id, organization_id, user.email, roleSlug]);
 
             // Record audit log
             await orgDb.recordAuditLog({
@@ -5993,18 +6240,21 @@ Disallow: /api/admin/
                 user_email: user.email,
                 method: 'verified_domain_auto_join',
                 domain: userDomain,
+                role: roleSlug,
               },
             });
 
             return res.status(201).json({
               success: true,
-              message: `You have been added to ${orgName}`,
+              message: roleSlug === 'owner'
+                ? `You've been added as the owner of ${orgName}`
+                : `You have been added to ${orgName}`,
               auto_joined: true,
               membership: {
                 id: membership.id,
                 organization_id: organization_id,
                 organization_name: orgName,
-                role: 'member',
+                role: roleSlug,
               },
             });
           }
@@ -6069,13 +6319,83 @@ Disallow: /api/admin/
           },
         });
 
-        // Notify org admins via Slack group DM (fire-and-forget)
+        // Check if org has any existing members
+        const orgMemberships = await workos!.userManagement.listOrganizationMemberships({
+          organizationId: organization_id,
+        });
+
+        // If org has no members (e.g., prospect org) AND user's email domain matches,
+        // auto-approve as owner. Domain check prevents unauthorized org claims.
+        if (orgMemberships.data.length === 0) {
+          const userDomain = user.email.split('@')[1]?.toLowerCase();
+          const pool = getPool();
+          const orgDomainResult = await pool.query(
+            `SELECT domain FROM organization_domains WHERE workos_organization_id = $1
+             UNION
+             SELECT email_domain FROM organizations WHERE workos_organization_id = $1 AND email_domain IS NOT NULL`,
+            [organization_id]
+          );
+          const orgDomains = orgDomainResult.rows.map((r: { domain?: string; email_domain?: string }) =>
+            (r.domain || r.email_domain)?.toLowerCase()
+          );
+
+          if (userDomain && orgDomains.includes(userDomain)) {
+            logger.info({
+              userId: user.id,
+              orgId: organization_id,
+              requestId: request.id,
+              domain: userDomain,
+            }, 'Ownerless org with matching domain — auto-approving join request as owner');
+
+            // Add user as owner
+            await workos!.userManagement.createOrganizationMembership({
+              userId: user.id,
+              organizationId: organization_id,
+              roleSlug: 'owner',
+            });
+
+            // Mark join request as approved
+            await joinRequestDb.approveRequest(request.id, user.id);
+
+            // Record audit log
+            await orgDb.recordAuditLog({
+              workos_organization_id: organization_id,
+              workos_user_id: user.id,
+              action: 'join_request_auto_approved',
+              resource_type: 'join_request',
+              resource_id: request.id,
+              details: {
+                reason: 'First member of ownerless organization with matching email domain',
+                role: 'owner',
+                domain: userDomain,
+              },
+            });
+
+            return res.status(201).json({
+              success: true,
+              message: `You've been added as the owner of ${orgName}`,
+              request: {
+                id: request.id,
+                organization_id: organization_id,
+                organization_name: orgName,
+                status: 'approved',
+                created_at: request.created_at,
+                auto_approved: true,
+              },
+            });
+          }
+
+          logger.info({
+            userId: user.id,
+            orgId: organization_id,
+            userDomain,
+            orgDomains,
+          }, 'Ownerless org but domain mismatch — treating as normal join request');
+        }
+
+        // Org has members — notify admins via Slack group DM (fire-and-forget)
         (async () => {
           try {
-            // Get org admins/owners
-            const orgMemberships = await workos!.userManagement.listOrganizationMemberships({
-              organizationId: organization_id,
-            });
             const adminEmails: string[] = [];
             for (const membership of orgMemberships.data) {
               if (membership.role?.slug === 'admin' || membership.role?.slug === 'owner') {
@@ -6474,7 +6794,7 @@ Disallow: /api/admin/
           offset: offset ? parseInt(offset as string, 10) : 0,
         });
 
-        // Resolve brand data in parallel for all profiles that have a primary brand
+        // Resolve brand data and credentials in parallel for all profiles
         await Promise.all(profiles.map(async (profile) => {
           if (profile.primary_brand_domain) {
             const hosted = await this.brandDb.getHostedBrandByDomain(profile.primary_brand_domain);
@@ -6485,8 +6805,23 @@ Disallow: /api/admin/
               const logos = (primaryBrand?.logos ?? bj.logos) as Array<Record<string, unknown>> | undefined;
               const colors = (primaryBrand?.colors ?? bj.colors) as Record<string, unknown> | undefined;
               profile.resolved_brand = { domain: profile.primary_brand_domain, logo_url: logos?.[0]?.url as string | undefined, brand_color: colors?.primary as string | undefined, verified: hosted.domain_verified };
+            } else {
+              const discovered = await this.brandDb.getDiscoveredBrandByDomain(profile.primary_brand_domain);
+              if (discovered) {
+                const manifest = discovered.brand_manifest as Record<string, unknown> | undefined;
+                const brands = manifest?.brands as Array<Record<string, unknown>> | undefined;
+                const primaryBrand = brands?.[0];
+                const logos = (primaryBrand?.logos ?? manifest?.logos) as Array<Record<string, unknown>> | undefined;
+                const colors = (primaryBrand?.colors ?? manifest?.colors) as Record<string, unknown> | undefined;
+                profile.resolved_brand = { domain: profile.primary_brand_domain, logo_url: logos?.[0]?.url as string | undefined, brand_color: colors?.primary as string | undefined, verified: true };
+              }
             }
           }
+          // Add earned credentials for org members
+          try {
+            const { getOrgMemberCredentials } = await import('./db/certification-db.js');
+            (profile as any).credentials = await getOrgMemberCredentials(profile.workos_organization_id);
+          } catch { /* credentials optional */ }
         }));
 
         res.json({ members: profiles });
@@ -6515,6 +6850,16 @@ Disallow: /api/admin/
               const logos = (primaryBrand?.logos ?? bj.logos) as Array<Record<string, unknown>> | undefined;
               const colors = (primaryBrand?.colors ?? bj.colors) as Record<string, unknown> | undefined;
               profile.resolved_brand = { domain: profile.primary_brand_domain, logo_url: logos?.[0]?.url as string | undefined, brand_color: colors?.primary as string | undefined, verified: hosted.domain_verified };
+            } else {
+              const discovered = await this.brandDb.getDiscoveredBrandByDomain(profile.primary_brand_domain);
+              if (discovered) {
+                const manifest = discovered.brand_manifest as Record<string, unknown> | undefined;
+                const brands = manifest?.brands as Array<Record<string, unknown>> | undefined;
+                const primaryBrand = brands?.[0];
+                const logos = (primaryBrand?.logos ?? manifest?.logos) as Array<Record<string, unknown>> | undefined;
+                const colors = (primaryBrand?.colors ?? manifest?.colors) as Record<string, unknown> | undefined;
+                profile.resolved_brand = { domain: profile.primary_brand_domain, logo_url: logos?.[0]?.url as string | undefined, brand_color: colors?.primary as string | undefined, verified: true };
+              }
             }
           }
         }));
@@ -6625,10 +6970,27 @@ Disallow: /api/admin/
             const logos = (primaryBrand?.logos ?? bj.logos) as Array<Record<string, unknown>> | undefined;
             const colors = (primaryBrand?.colors ?? bj.colors) as Record<string, unknown> | undefined;
             profile.resolved_brand = { domain: profile.primary_brand_domain, logo_url: logos?.[0]?.url as string | undefined, brand_color: colors?.primary as string | undefined, verified: hostedBrand.domain_verified };
+          } else {
+            const discovered = await this.brandDb.getDiscoveredBrandByDomain(profile.primary_brand_domain);
+            if (discovered) {
+              const manifest = discovered.brand_manifest as Record<string, unknown> | undefined;
+              const brands = manifest?.brands as Array<Record<string, unknown>> | undefined;
+              const primaryBrand = brands?.[0];
+              const logos = (primaryBrand?.logos ?? manifest?.logos) as Array<Record<string, unknown>> | undefined;
+              const colors = (primaryBrand?.colors ?? manifest?.colors) as Record<string, unknown> | undefined;
+              profile.resolved_brand = { domain: profile.primary_brand_domain, logo_url: logos?.[0]?.url as string | undefined, brand_color: colors?.primary as string | undefined, verified: true };
+            }
           }
         }
 
-        res.json({ member: profile, perspectives, registry_contributions, github_username });
+        // Add earned credentials for org members
+        let credentials: { credential_id: string; credential_name: string; tier: number; awarded_at: string }[] = [];
+        try {
+          const { getOrgMemberCredentials } = await import('./db/certification-db.js');
+          credentials = await getOrgMemberCredentials(profile.workos_organization_id);
+        } catch { /* credentials optional */ }
+
+        res.json({ member: { ...profile, credentials }, perspectives, registry_contributions, github_username });
       } catch (error) {
         logger.error({ err: error }, 'Get member error');
         res.status(500).json({
@@ -6695,10 +7057,8 @@ Disallow: /api/admin/
 
     // Note: Member profile routes are in routes/member-profiles.ts (mounted in setupRoutes)
 
-    // Note: Prospect management routes are in routes/admin.ts
-    // Routes: GET/POST /api/admin/prospects, POST /api/admin/prospects/bulk,
-    //         PUT /api/admin/prospects/:orgId, GET /api/admin/prospects/stats,
-    //         GET /api/admin/organizations
+    // Note: Account management routes are in routes/admin/accounts.ts
+    // Old /api/admin/prospects/* paths are proxied via routes/admin/prospects.ts for compatibility
 
     // NOTE: Agent management is now handled through member profiles.
     // Agents are stored in the member_profiles.agents JSONB array.
@@ -7084,23 +7444,18 @@ Disallow: /api/admin/
     // Register and start all scheduled jobs
     registerAllJobs();
 
-    // Start most jobs
-    jobScheduler.start(JOB_NAMES.DOCUMENT_INDEXER);
-    jobScheduler.start(JOB_NAMES.SUMMARY_GENERATOR);
-    jobScheduler.start(JOB_NAMES.PROACTIVE_OUTREACH);
-    jobScheduler.start(JOB_NAMES.ACCOUNT_ENRICHMENT);
-    jobScheduler.start(JOB_NAMES.CONTENT_CURATOR);
-    jobScheduler.start(JOB_NAMES.FEED_FETCHER);
-    jobScheduler.start(JOB_NAMES.ALERT_PROCESSOR);
-    jobScheduler.start(JOB_NAMES.TASK_REMINDER);
-    jobScheduler.start(JOB_NAMES.ENGAGEMENT_SCORING);
-    jobScheduler.start(JOB_NAMES.GOAL_FOLLOW_UP);
-    jobScheduler.start(JOB_NAMES.SLACK_AUTO_LINK);
+    // Start all registered jobs
+    jobScheduler.startAll();
 
-    // Start Moltbook jobs only if API key is configured
-    if (process.env.MOLTBOOK_API_KEY) {
-      jobScheduler.start(JOB_NAMES.MOLTBOOK_POSTER);
-      jobScheduler.start(JOB_NAMES.MOLTBOOK_ENGAGEMENT);
+    // Stop jobs that require missing env vars
+    if (!process.env.MOLTBOOK_API_KEY) {
+      jobScheduler.stop(JOB_NAMES.MOLTBOOK_POSTER);
+      jobScheduler.stop(JOB_NAMES.MOLTBOOK_ENGAGEMENT);
+    }
+    if (!process.env.LLMPULSE_API_KEY) {
+      jobScheduler.stop(JOB_NAMES.GEO_MONITOR);
+      jobScheduler.stop(JOB_NAMES.GEO_SNAPSHOT);
+      jobScheduler.stop(JOB_NAMES.GEO_CONTENT_PLANNER);
     }
 
     this.server = this.app.listen(port, () => {

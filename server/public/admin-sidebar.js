@@ -19,8 +19,14 @@
         items: [
           { href: '/admin/users', label: 'Users & Actions', icon: '👤' },
           { href: '/admin/members', label: 'Organizations', icon: '🏢' },
-          { href: '/admin/accounts', label: 'Accounts', icon: '📋' },
+          { href: '/manage/accounts', label: 'Accounts', icon: '📋' },
           { href: '/admin/domain-health', label: 'Domain Health', icon: '🔗' },
+        ]
+      },
+      {
+        label: 'Relationships',
+        items: [
+          { href: '/admin/people', label: 'People', icon: '👥' },
         ]
       },
       {
@@ -37,6 +43,18 @@
         items: [
           { href: '/admin/products', label: 'Products', icon: '💳' },
           { href: '/admin/billing', label: 'Stripe Linking', icon: '🔗' },
+        ]
+      },
+      {
+        label: 'Registry',
+        items: [
+          { href: '/admin/policies', label: 'Policy Registry', icon: '📜' },
+        ]
+      },
+      {
+        label: 'Programs',
+        items: [
+          { href: '/admin/certification', label: 'Certification', icon: '🎓' },
         ]
       },
       {

@@ -28,6 +28,7 @@ import type {
 } from '@slack/bolt/dist/Assistant';
 import type { Router } from 'express';
 import { logger } from '../logger.js';
+import { captureEvent } from '../utils/posthog.js';
 import { AddieClaudeClient, ADMIN_MAX_ITERATIONS, type UserScopedToolsResult } from './claude-client.js';
 import { AddieDatabase } from '../db/addie-db.js';
 import { getPool } from '../db/client.js';
@@ -101,6 +102,8 @@ import { COLLABORATION_TOOLS, createCollaborationToolHandlers } from './mcp/coll
 import { COMMITTEE_LEADER_TOOLS, createCommitteeLeaderToolHandlers } from './mcp/committee-leader-tools.js';
 import { PROPERTY_TOOLS, createPropertyToolHandlers } from './mcp/property-tools.js';
 import { SCHEMA_TOOLS, createSchemaToolHandlers } from './mcp/schema-tools.js';
+import { CERTIFICATION_TOOLS, createCertificationToolHandlers, buildCertificationContext } from './mcp/certification-tools.js';
+import * as certDb from '../db/certification-db.js';
 import { siRetriever, type SIRetrievalResult } from './services/si-retriever.js';
 import { initializeEmailHandler } from './email-handler.js';
 import {
@@ -621,7 +624,7 @@ async function buildRequestContext(
   userId: string,
   threadContext?: ThreadContext,
   existingMemberContext?: MemberContext | null
-): Promise<{ requestContext: string; memberContext: MemberContext | null }> {
+): Promise<{ requestContext: string; memberContext: MemberContext | null; hasCertificationContext: boolean }> {
   try {
     const memberContext = existingMemberContext !== undefined ? existingMemberContext : await getMemberContext(userId);
     const memberContextText = memberContext ? formatMemberContextForPrompt(memberContext) : null;
@@ -646,31 +649,53 @@ async function buildRequestContext(
       // Public channels are visible to all workspace members — never share sensitive data there
       if (threadContext.viewing_channel_is_private === false) {
         channelLines.push('');
-        channelLines.push('**IMPORTANT: This is a PUBLIC channel visible to all workspace members. You MUST NOT share financial data, member counts, invoice information, individual member details, pricing information, or any other sensitive organizational data in this channel, even if an admin asks. If asked for sensitive information, tell them to ask you in a private message instead.**');
+        channelLines.push('**IMPORTANT: This is a PUBLIC channel visible to all workspace members.**');
+        channelLines.push('- You MUST NOT share financial data, member counts, invoice information, individual member details, pricing information, or any other sensitive organizational data in this channel, even if an admin asks. If asked for sensitive information, tell them to ask you in a private message instead.');
+        channelLines.push('- You MUST NOT pitch membership, send join links, or recruit in public channels — membership conversations belong in DMs.');
+        channelLines.push('- The user context above is for the message sender only. Do not use it to make assumptions about other people in the thread. Do not address other thread participants by their membership status.');
       }
       channelContextText = channelLines.join('\n');
     }
 
     // Get insight goals to naturally work into conversation
+    // Skip in public channels — goals like enrollment drive unwanted pitching
+    const isPublicChannel = threadContext?.viewing_channel_is_private === false;
     const isMapped = !!memberContext?.is_mapped;
     let insightGoalsText = '';
-    try {
-      const goalsPrompt = await getGoalsForSystemPrompt(isMapped);
-      if (goalsPrompt) {
-        insightGoalsText = goalsPrompt;
+    if (!isPublicChannel) {
+      try {
+        const goalsPrompt = await getGoalsForSystemPrompt(isMapped);
+        if (goalsPrompt) {
+          insightGoalsText = goalsPrompt;
+        }
+      } catch (error) {
+        logger.warn({ error }, 'Addie Bolt: Failed to get insight goals for prompt');
       }
-    } catch (error) {
-      logger.warn({ error }, 'Addie Bolt: Failed to get insight goals for prompt');
     }
 
-    const sections = [memberContextText, channelContextText, insightGoalsText].filter(Boolean);
+    // Add certification module state so Addie remembers active modules
+    // even when conversation history is trimmed
+    let certContextText = '';
+    const workosUserId = memberContext?.workos_user?.workos_user_id;
+    if (workosUserId) {
+      try {
+        const progress = await certDb.getProgress(workosUserId);
+        const inProgress = progress.filter(p => p.status === 'in_progress');
+        certContextText = await buildCertificationContext(inProgress, workosUserId) || '';
+      } catch (error) {
+        logger.warn({ error }, 'Addie Bolt: Failed to get certification progress for context');
+      }
+    }
+
+    const sections = [memberContextText, channelContextText, insightGoalsText, certContextText].filter(Boolean);
     return {
       requestContext: sections.length > 0 ? sections.join('\n\n') : '',
       memberContext,
+      hasCertificationContext: !!certContextText,
     };
   } catch (error) {
     logger.warn({ error, userId }, 'Addie Bolt: Failed to get member context, continuing without it');
-    return { requestContext: '', memberContext: null };
+    return { requestContext: '', memberContext: null, hasCertificationContext: false };
   }
 }
 
@@ -686,17 +711,23 @@ async function createUserScopedTools(
   threadId?: string,
   threadContext?: ThreadContext | null
 ): Promise<UserScopedToolsResult> {
-  const memberHandlers = createMemberToolHandlers(memberContext);
-  const allTools = [...MEMBER_TOOLS];
+  const memberHandlers = createMemberToolHandlers(memberContext, slackUserId);
+  let allTools = [...MEMBER_TOOLS];
   const allHandlers = new Map(memberHandlers);
 
   // Add billing tools for all users (membership signup assistance)
-  const billingHandlers = createBillingToolHandlers(memberContext);
-  allTools.push(...BILLING_TOOLS);
-  for (const [name, handler] of billingHandlers) {
-    allHandlers.set(name, handler);
+  // Skip in public channels — billing tools enable enrollment pitching
+  const isPublicChannel = threadContext?.viewing_channel_is_private === false;
+  if (!isPublicChannel) {
+    const billingHandlers = createBillingToolHandlers(memberContext);
+    allTools.push(...BILLING_TOOLS);
+    for (const [name, handler] of billingHandlers) {
+      allHandlers.set(name, handler);
+    }
+    logger.debug('Addie Bolt: Billing tools enabled');
+  } else {
+    logger.debug('Addie Bolt: Billing tools skipped (public channel)');
   }
-  logger.debug('Addie Bolt: Billing tools enabled');
 
   // Add escalation tools for all users
   const escalationHandlers = createEscalationToolHandlers(memberContext, slackUserId, threadId);
@@ -795,6 +826,13 @@ async function createUserScopedTools(
     allHandlers.set(name, handler);
   }
 
+  // Add certification tools (learning modules, exams, progress tracking)
+  const certificationHandlers = createCertificationToolHandlers(memberContext, { threadId });
+  allTools.push(...CERTIFICATION_TOOLS);
+  for (const [name, handler] of certificationHandlers) {
+    allHandlers.set(name, handler);
+  }
+
   // Override bookmark_resource handler with user-scoped version (for attribution)
   if (slackUserId) {
     allHandlers.set('bookmark_resource', createUserScopedBookmarkHandler(slackUserId));
@@ -811,6 +849,15 @@ async function createUserScopedTools(
     if (getChannelActivityHandler) {
       allHandlers.set('get_channel_activity', getChannelActivityHandler);
     }
+  }
+
+  // Remove enrollment tools in public channels (covers all handler paths,
+  // not just the ones that go through filterToolsBySet)
+  if (isPublicChannel) {
+    const enrollmentToolNames = new Set(['get_account_link']);
+    allTools = allTools.filter(t => !enrollmentToolNames.has(t.name));
+    enrollmentToolNames.forEach(name => allHandlers.delete(name));
+    logger.debug('Addie Bolt: Enrollment tools removed (public channel)');
   }
 
   return {
@@ -834,10 +881,11 @@ async function createUserScopedTools(
 function filterToolsBySet(
   userTools: RequestTools,
   selectedSets: string[],
-  isAAOAdmin: boolean
+  isAAOAdmin: boolean,
+  isPublicChannel: boolean = false
 ): { filteredTools: RequestTools; unavailableHint: string } {
   // Get all tool names that should be available based on selected sets
-  const allowedToolNames = new Set(getToolsForSets(selectedSets, isAAOAdmin));
+  const allowedToolNames = new Set(getToolsForSets(selectedSets, isAAOAdmin, isPublicChannel));
 
   // Filter tools to only those allowed
   const filteredToolDefs = userTools.tools.filter(tool => allowedToolNames.has(tool.name));
@@ -1021,6 +1069,13 @@ async function handleUserMessage({
         sentiment: analysis.sentiment,
         intent: analysis.intent,
       }, 'Addie Bolt: Recorded outreach response (Assistant)');
+      captureEvent(userId, 'outreach_responded', {
+        outreach_id: pendingOutreach.id,
+        outreach_type: pendingOutreach.outreach_type,
+        sentiment: analysis.sentiment,
+        intent: analysis.intent,
+        channel: 'assistant_thread',
+      });
     }
   } catch (err) {
     logger.warn({ err, userId }, 'Addie Bolt: Failed to track outreach response');
@@ -1109,6 +1164,7 @@ async function handleUserMessage({
         .map(msg => ({
           user: msg.role === 'user' ? 'User' : 'Addie',
           text: msg.content_sanitized || msg.content,
+          toolCalls: msg.tool_calls ?? undefined,
         }));
 
       if (conversationHistory.length > 0) {
@@ -1124,7 +1180,7 @@ async function handleUserMessage({
   }
 
   // Build per-request context for system prompt
-  let { requestContext, memberContext: updatedMemberContext } = await buildRequestContext(
+  let { requestContext, memberContext: updatedMemberContext, hasCertificationContext } = await buildRequestContext(
     userId,
     slackThreadContext
   );
@@ -1157,8 +1213,12 @@ async function handleUserMessage({
   // Create user-scoped tools (includes admin tools if user is admin, meeting tools with channel context)
   const { tools: userTools, isAAOAdmin: userIsAdmin } = await createUserScopedTools(memberContext, userId, thread.thread_id, slackThreadContext);
 
-  // Admin users get higher iteration limit for bulk operations
-  const processOptions = userIsAdmin ? { maxIterations: ADMIN_MAX_ITERATIONS, requestContext } : { requestContext };
+  // Admin users get higher iteration limit; certification sessions get more conversation history
+  const processOptions: import('./claude-client.js').ProcessMessageOptions = {
+    requestContext,
+    ...(userIsAdmin && { maxIterations: ADMIN_MAX_ITERATIONS }),
+    ...(hasCertificationContext && { maxMessages: 50 }),
+  };
 
   // Process with Claude using streaming
   let response;
@@ -1573,6 +1633,7 @@ async function handleAppMention({
         .map(msg => ({
           user: msg.role === 'user' ? 'User' : 'Addie',
           text: msg.content_sanitized || msg.content,
+          toolCalls: msg.tool_calls ?? undefined,
         }));
 
       if (conversationHistory.length > 0) {
@@ -2209,6 +2270,14 @@ async function handleDirectMessage(
         intent: analysis.intent,
         followUpDays: analysis.followUpDays,
       }, 'Addie Bolt: Recorded outreach response');
+      captureEvent(userId, 'outreach_responded', {
+        outreach_id: pendingOutreach.id,
+        outreach_type: pendingOutreach.outreach_type,
+        sentiment: analysis.sentiment,
+        intent: analysis.intent,
+        follow_up_days: analysis.followUpDays,
+        channel: 'dm',
+      });
     }
   } catch (err) {
     // Don't fail the DM handling if outreach tracking fails
@@ -2258,6 +2327,7 @@ async function handleDirectMessage(
         .map(msg => ({
           user: msg.role === 'user' ? 'User' : 'Addie',
           text: msg.content_sanitized || msg.content,
+          toolCalls: msg.tool_calls ?? undefined,
         }));
 
       if (conversationHistory.length > 0) {
@@ -2560,6 +2630,7 @@ async function handleActiveThreadReply({
         .map(msg => ({
           user: msg.role === 'user' ? 'User' : 'Addie',
           text: msg.content_sanitized || msg.content,
+          toolCalls: msg.tool_calls ?? undefined,
         }));
 
       if (conversationHistory.length > 0) {
@@ -2574,8 +2645,8 @@ async function handleActiveThreadReply({
     historyUnavailable = true;
   }
 
-  // Build per-request context for system prompt
-  const { requestContext: memberRequestContext, memberContext: updatedMemberContext } = await buildRequestContext(userId);
+  // Build per-request context for system prompt (pass channelContext so public channel guard is included)
+  const { requestContext: memberRequestContext, memberContext: updatedMemberContext } = await buildRequestContext(userId, channelContext);
   if (!memberContext && updatedMemberContext) {
     memberContext = updatedMemberContext;
   }
@@ -3053,12 +3124,12 @@ async function handleChannelMessage({
     logger.info({ channelId, userId, toolSets: plan.tool_sets },
       'Addie Bolt: Generating proposed response for channel message');
 
-    // Build per-request context for system prompt
-    const { requestContext: memberRequestContext } = await buildRequestContext(userId);
+    // Build per-request context for system prompt (pass channelContext so public channel guard is included)
+    const { requestContext: memberRequestContext } = await buildRequestContext(userId, channelContext);
 
     // Get all user-scoped tools then filter by selected tool sets
     const { tools: userTools, isAAOAdmin: userIsAdmin } = await createUserScopedTools(memberContext, userId, thread.thread_id, channelContext);
-    const { filteredTools, unavailableHint } = filterToolsBySet(userTools, plan.tool_sets, userIsAdmin);
+    const { filteredTools, unavailableHint } = filterToolsBySet(userTools, plan.tool_sets, userIsAdmin, channelContext?.viewing_channel_is_private === false);
 
     // Build SI context from retrieved agents
     const siContext = siRetrievalResult?.agents.length
@@ -3630,6 +3701,7 @@ async function handleReactionAdded({
         .map(msg => ({
           user: msg.role === 'user' ? 'User' : 'Addie',
           text: msg.content_sanitized || msg.content,
+          toolCalls: msg.tool_calls ?? undefined,
         }));
 
       if (conversationHistory.length > 0) {
@@ -3652,8 +3724,8 @@ async function handleReactionAdded({
     logger.debug({ error, itemChannel }, 'Addie Bolt: Could not get channel context for reaction handler');
   }
 
-  // Build per-request context for system prompt
-  let { requestContext, memberContext } = await buildRequestContext(reactingUserId);
+  // Build per-request context for system prompt (pass channelContext so public channel guard is included)
+  let { requestContext, memberContext } = await buildRequestContext(reactingUserId, channelContext);
   if (historyUnavailable) {
     requestContext += `\n\n${HISTORY_UNAVAILABLE_NOTE}`;
   }

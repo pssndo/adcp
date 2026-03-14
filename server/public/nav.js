@@ -26,6 +26,13 @@
     return;
   }
 
+  function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
   // Determine if running locally
   const isLocal = hostname === 'localhost' || hostname === '127.0.0.1';
 
@@ -70,6 +77,13 @@
 
   // Get current path to mark active link
   const currentPath = window.location.pathname;
+
+  function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
 
   // Build navigation HTML - will be updated after config fetch
   function buildNavHTML(config) {
@@ -135,13 +149,16 @@
     const publishersUrl = isLocal ? '/publishers' : `${aaoBaseUrl}/publishers`;
 
     // Build about dropdown (only on beta site - links to trade association)
-    // Includes About page, Membership page, and Governance page
+    // Includes About page, Membership page, Governance page, and content feeds
     const aboutUrl = isLocal ? '/about' : 'https://agenticadvertising.org/about';
     const membershipUrl = isLocal ? '/membership' : 'https://agenticadvertising.org/membership';
     const governanceUrl = isLocal ? '/governance' : 'https://agenticadvertising.org/governance';
+    const latestBaseUrl = isLocal ? '/latest' : `${aaoBaseUrl}/latest`;
+    const isLatestActive = currentPath.startsWith('/latest') || currentPath.startsWith('/perspectives');
+    const isAboutActive = currentPath === '/about' || currentPath === '/membership' || currentPath === '/governance' || isLatestActive;
     const aboutDropdown = membershipEnabled
       ? `<div class="navbar__dropdown-wrapper">
-          <button class="navbar__link navbar__dropdown-trigger ${currentPath === '/about' || currentPath === '/membership' || currentPath === '/governance' ? 'active' : ''}">
+          <button class="navbar__link navbar__dropdown-trigger ${isAboutActive ? 'active' : ''}">
             About
             <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" style="margin-left: 4px;">
               <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" stroke-width="1.5" fill="none"/>
@@ -151,6 +168,10 @@
             <a href="${aboutUrl}" class="navbar__dropdown-item ${currentPath === '/about' ? 'active' : ''}">About</a>
             <a href="${membershipUrl}" class="navbar__dropdown-item ${currentPath === '/membership' ? 'active' : ''}">Membership</a>
             <a href="${governanceUrl}" class="navbar__dropdown-item ${currentPath === '/governance' ? 'active' : ''}">Governance</a>
+            <div class="navbar__dropdown-divider"></div>
+            <a href="${latestBaseUrl}/perspectives" class="navbar__dropdown-item ${currentPath === '/latest/perspectives' ? 'active' : ''}">Perspectives</a>
+            <a href="${latestBaseUrl}/industry-news" class="navbar__dropdown-item ${currentPath === '/latest/industry-news' ? 'active' : ''}">Industry News</a>
+            <a href="${latestBaseUrl}/announcements" class="navbar__dropdown-item ${currentPath === '/latest/announcements' ? 'active' : ''}">Announcements</a>
           </div>
         </div>`
       : '';
@@ -187,26 +208,6 @@
           </div>
         </div>`;
 
-    // Build "The Latest" dropdown
-    const latestBaseUrl = isLocal ? '/latest' : `${aaoBaseUrl}/latest`;
-    const isLatestActive = currentPath.startsWith('/latest') || currentPath.startsWith('/perspectives');
-    const latestDropdown = membershipEnabled
-      ? `<div class="navbar__dropdown-wrapper">
-          <button class="navbar__link navbar__dropdown-trigger ${isLatestActive ? 'active' : ''}">
-            The Latest
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" style="margin-left: 4px;">
-              <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" stroke-width="1.5" fill="none"/>
-            </svg>
-          </button>
-          <div class="navbar__dropdown navbar__dropdown--nav">
-            <a href="${latestBaseUrl}/perspectives" class="navbar__dropdown-item ${currentPath === '/latest/perspectives' ? 'active' : ''}">Perspectives</a>
-            <a href="${latestBaseUrl}/industry-news" class="navbar__dropdown-item ${currentPath === '/latest/industry-news' ? 'active' : ''}">Industry News</a>
-            <a href="${latestBaseUrl}/learning" class="navbar__dropdown-item ${currentPath === '/latest/learning' ? 'active' : ''}">Learning Agentic</a>
-            <a href="${latestBaseUrl}/announcements" class="navbar__dropdown-item ${currentPath === '/latest/announcements' ? 'active' : ''}">Announcements</a>
-          </div>
-        </div>`
-      : '';
-
     // Build "Participate" dropdown (combines Events + Committees)
     const eventsUrl = isLocal ? '/events' : `${aaoBaseUrl}/events`;
     const isEventsActive = currentPath.startsWith('/events');
@@ -220,6 +221,7 @@
     const communityPeopleUrl = isLocal ? '/community/people' : `${aaoBaseUrl}/community/people`;
     const isCommunityActive = currentPath.startsWith('/community');
     const isCommitteesActive = currentPath.startsWith('/committees') || currentPath.startsWith('/working-groups') || currentPath.startsWith('/industry-gatherings') || currentPath.startsWith('/meetings');
+    const isCertificationActive = currentPath.startsWith('/certification') || currentPath.startsWith('/study-guide');
     const isParticipateActive = isEventsActive || isCommitteesActive || isCommunityActive;
     const participateDropdown = membershipEnabled
       ? `<div class="navbar__dropdown-wrapper">
@@ -262,13 +264,13 @@
             </a>
             <div class="navbar__links-desktop">
               ${projectsDropdown}
-              ${latestDropdown}
               ${participateDropdown}
               ${aboutDropdown}
             </div>
           </div>
           <div class="navbar__items navbar__items--right">
             <div class="navbar__links-desktop">
+              <a href="/certification" class="navbar__link ${isCertificationActive ? 'active' : ''}">Academy</a>
               <a href="/chat" class="navbar__link ${currentPath === '/chat' ? 'active' : ''}">Ask Addie</a>
               <a href="${docsUrl}" class="navbar__link">Docs</a>
             </div>
@@ -294,11 +296,6 @@
           <a href="${agentsUrl}" class="navbar__link navbar__link--indent ${currentPath === '/agents' ? 'active' : ''}">Agents</a>
           <a href="${brandsUrl}" class="navbar__link navbar__link--indent ${currentPath === '/brands' ? 'active' : ''}">Brands</a>
           <a href="${publishersUrl}" class="navbar__link navbar__link--indent ${currentPath === '/publishers' ? 'active' : ''}">Publishers</a>
-          ${membershipEnabled ? `<span class="navbar__link navbar__link--header">The Latest</span>` : ''}
-          ${membershipEnabled ? `<a href="${latestBaseUrl}/perspectives" class="navbar__link navbar__link--indent ${currentPath === '/latest/perspectives' ? 'active' : ''}">Perspectives</a>` : ''}
-          ${membershipEnabled ? `<a href="${latestBaseUrl}/industry-news" class="navbar__link navbar__link--indent ${currentPath === '/latest/industry-news' ? 'active' : ''}">Industry News</a>` : ''}
-          ${membershipEnabled ? `<a href="${latestBaseUrl}/learning" class="navbar__link navbar__link--indent ${currentPath === '/latest/learning' ? 'active' : ''}">Learning Agentic</a>` : ''}
-          ${membershipEnabled ? `<a href="${latestBaseUrl}/announcements" class="navbar__link navbar__link--indent ${currentPath === '/latest/announcements' ? 'active' : ''}">Announcements</a>` : ''}
           ${membershipEnabled ? `<span class="navbar__link navbar__link--header">Participate</span>` : ''}
           ${membershipEnabled ? `<a href="${communityHubUrl}" class="navbar__link navbar__link--indent ${currentPath === '/community' ? 'active' : ''}">Community hub</a>` : ''}
           ${membershipEnabled ? `<a href="${communityPeopleUrl}" class="navbar__link navbar__link--indent ${currentPath.startsWith('/community/people') ? 'active' : ''}">People</a>` : ''}
@@ -313,6 +310,10 @@
           <a href="${aboutUrl}" class="navbar__link navbar__link--indent ${currentPath === '/about' ? 'active' : ''}">About</a>
           <a href="${membershipUrl}" class="navbar__link navbar__link--indent ${currentPath === '/membership' ? 'active' : ''}">Membership</a>
           <a href="${governanceUrl}" class="navbar__link navbar__link--indent ${currentPath === '/governance' ? 'active' : ''}">Governance</a>
+          ${membershipEnabled ? `<a href="${latestBaseUrl}/perspectives" class="navbar__link navbar__link--indent ${currentPath === '/latest/perspectives' ? 'active' : ''}">Perspectives</a>` : ''}
+          ${membershipEnabled ? `<a href="${latestBaseUrl}/industry-news" class="navbar__link navbar__link--indent ${currentPath === '/latest/industry-news' ? 'active' : ''}">Industry News</a>` : ''}
+          ${membershipEnabled ? `<a href="${latestBaseUrl}/announcements" class="navbar__link navbar__link--indent ${currentPath === '/latest/announcements' ? 'active' : ''}">Announcements</a>` : ''}
+          <a href="/certification" class="navbar__link ${isCertificationActive ? 'active' : ''}">Academy</a>
           <a href="/chat" class="navbar__link ${currentPath === '/chat' ? 'active' : ''}">Ask Addie</a>
           <a href="${docsUrl}" class="navbar__link">Docs</a>
         </div>

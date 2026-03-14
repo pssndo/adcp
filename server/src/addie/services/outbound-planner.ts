@@ -44,11 +44,12 @@ export class OutboundPlanner {
    */
   async planNextAction(ctx: PlannerContext): Promise<PlannedAction | null> {
     const startTime = Date.now();
+    const availableChannels = ctx.available_channels ?? ['slack'];
 
     // Can't contact user? No action.
     if (!ctx.contact_eligibility.can_contact) {
       logger.debug({
-        slack_user_id: ctx.user.slack_user_id,
+        user_id: ctx.user.slack_user_id ?? ctx.prospect_org_id,
         reason: ctx.contact_eligibility.reason,
       }, 'Planner: Cannot contact user');
       return null;
@@ -56,12 +57,22 @@ export class OutboundPlanner {
 
     // STAGE 1: Get enabled goals and filter by eligibility (rule-based, fast)
     const allGoals = await outboundDb.listGoals({ enabledOnly: true });
-    let eligible = allGoals.filter(g => this.isEligible(g, ctx));
+
+    // Filter by channel compatibility: goal must match at least one available channel
+    const channelFiltered = allGoals.filter(g => {
+      if (g.channel === 'any') return true;
+      return availableChannels.includes(g.channel as 'slack' | 'email');
+    });
+
+    let eligible = channelFiltered.filter(g => this.isEligible(g, ctx));
+
+    const userId = ctx.user.slack_user_id ?? ctx.prospect_org_id ?? 'unknown';
 
     if (eligible.length === 0) {
       logger.debug({
-        slack_user_id: ctx.user.slack_user_id,
+        user_id: userId,
         total_goals: allGoals.length,
+        channel_filtered: channelFiltered.length,
       }, 'Planner: No eligible goals');
       return null;
     }
@@ -71,7 +82,7 @@ export class OutboundPlanner {
 
     if (eligible.length === 0) {
       logger.debug({
-        slack_user_id: ctx.user.slack_user_id,
+        user_id: userId,
         total_goals: allGoals.length,
       }, 'Planner: No eligible goals after async checks');
       return null;
@@ -82,19 +93,29 @@ export class OutboundPlanner {
 
     if (available.length === 0) {
       logger.debug({
-        slack_user_id: ctx.user.slack_user_id,
+        user_id: userId,
         eligible_count: eligible.length,
       }, 'Planner: No available goals (all attempted recently)');
       return null;
     }
 
+    // Determine channel for the result
+    const resolveChannel = (goal: OutreachGoal): 'slack' | 'email' => {
+      if (goal.channel === 'email') return 'email';
+      if (goal.channel === 'slack') return 'slack';
+      // For 'any' goals, prefer Slack if available
+      return availableChannels.includes('slack') ? 'slack' : 'email';
+    };
+
     // STAGE 3: Quick match for obvious cases (rule-based)
     const quickMatch = this.quickMatch(available, ctx);
     if (quickMatch) {
       quickMatch.decision_method = 'rule_match';
+      quickMatch.channel = resolveChannel(quickMatch.goal);
       logger.debug({
-        slack_user_id: ctx.user.slack_user_id,
+        user_id: userId,
         goal: quickMatch.goal.name,
+        channel: quickMatch.channel,
         reason: quickMatch.reason,
         latency_ms: Date.now() - startTime,
       }, 'Planner: Quick match selected goal');
@@ -103,9 +124,11 @@ export class OutboundPlanner {
 
     // STAGE 4: LLM-based selection among candidates (nuanced)
     const llmResult = await this.llmSelect(available, ctx, startTime);
+    llmResult.channel = resolveChannel(llmResult.goal);
     logger.debug({
-      slack_user_id: ctx.user.slack_user_id,
+      user_id: userId,
       goal: llmResult.goal.name,
+      channel: llmResult.channel,
       reason: llmResult.reason,
       latency_ms: Date.now() - startTime,
     }, 'Planner: LLM selected goal');
@@ -116,6 +139,11 @@ export class OutboundPlanner {
    * Check if a goal is eligible for this user (rule-based)
    */
   private isEligible(goal: OutreachGoal, ctx: PlannerContext): boolean {
+    // Skip membership acquisition goals for active members
+    if (ctx.user.is_member && goal.success_insight_type === 'membership_interest') {
+      return false;
+    }
+
     // Check mapping requirement
     if (goal.requires_mapped && !ctx.user.is_mapped) {
       return false;
@@ -226,8 +254,9 @@ export class OutboundPlanner {
       // Currently in progress? Wait.
       if (h.status === 'pending' || h.status === 'sent') return false;
 
-      // Deferred? Check if retry time has passed.
-      if (h.status === 'deferred' && h.next_attempt_at) {
+      // Deferred? Block until retry time has passed. No retry time = blocked indefinitely.
+      if (h.status === 'deferred') {
+        if (!h.next_attempt_at) return false;
         if (new Date() < h.next_attempt_at) return false;
       }
 
@@ -256,26 +285,11 @@ export class OutboundPlanner {
         priority_score: goals[0].base_priority,
         alternative_goals: [],
         decision_method: 'rule_match',
+        channel: 'slack',
       };
     }
 
-    // PRIORITY 1: Account linking for unmapped users
-    if (!ctx.user.is_mapped || !caps?.account_linked) {
-      const linkGoal = goals.find(g =>
-        g.category === 'admin' && g.name.toLowerCase().includes('link')
-      );
-      if (linkGoal) {
-        return {
-          goal: linkGoal,
-          reason: 'User needs to link account first',
-          priority_score: 100,
-          alternative_goals: goals.filter(g => g.id !== linkGoal.id).slice(0, 3),
-          decision_method: 'rule_match',
-        };
-      }
-    }
-
-    // PRIORITY 2: Profile completion (only for paid members - profiles are only visible to members)
+    // PRIORITY 1: Profile completion (only for paid members - profiles are only visible to members)
     // Skip for personal workspaces since those aren't real company profiles
     if (caps && !caps.profile_complete && ctx.user.is_member && !ctx.company?.is_personal_workspace) {
       const profileGoal = goals.find(g =>
@@ -288,11 +302,12 @@ export class OutboundPlanner {
           priority_score: 85,
           alternative_goals: goals.filter(g => g.id !== profileGoal.id).slice(0, 3),
           decision_method: 'rule_match',
+          channel: 'slack',
         };
       }
     }
 
-    // PRIORITY 3: Community directory (for mapped users not yet in the directory)
+    // PRIORITY 2: Community directory (for mapped users not yet in the directory)
     if (caps && caps.account_linked && !caps.community_profile_public) {
       const communityGoal = goals.find(g =>
         g.name.toLowerCase().includes('community directory') && g.category === 'admin'
@@ -304,11 +319,12 @@ export class OutboundPlanner {
           priority_score: 75,
           alternative_goals: goals.filter(g => g.id !== communityGoal.id).slice(0, 3),
           decision_method: 'rule_match',
+          channel: 'slack',
         };
       }
     }
 
-    // PRIORITY 3.5: Founding member deadline (time-sensitive, expires April 1 2026)
+    // PRIORITY 3: Founding member deadline (time-sensitive, expires April 1 2026)
     if (new Date() < FOUNDING_DEADLINE && !ctx.user.is_member && !ctx.company?.is_personal_workspace) {
       const deadlineGoal = goals.find(g => g.name === 'Founding Member Deadline');
       if (deadlineGoal) {
@@ -318,11 +334,12 @@ export class OutboundPlanner {
           priority_score: 95,
           alternative_goals: goals.filter(g => g.id !== deadlineGoal.id).slice(0, 3),
           decision_method: 'rule_match',
+          channel: 'slack',
         };
       }
     }
 
-    // PRIORITY 3.6: Addie-owned prospects — prioritize invitation/membership goals
+    // PRIORITY 4: Addie-owned prospects — prioritize invitation/membership goals
     // These are prospects Addie has triaged and claimed; she should nudge them toward membership
     if (ctx.company?.is_addie_prospect && !ctx.user.is_member) {
       const inviteGoal = goals.find(g => g.category === 'invitation');
@@ -333,11 +350,12 @@ export class OutboundPlanner {
           priority_score: 80,
           alternative_goals: goals.filter(g => g.id !== inviteGoal.id).slice(0, 3),
           decision_method: 'rule_match',
+          channel: 'slack',
         };
       }
     }
 
-    // PRIORITY 4: Vendor membership (tech companies benefit from profile visibility)
+    // PRIORITY 5: Vendor membership (tech companies benefit from profile visibility)
     // Only for non-members at vendor-type companies
     const vendorTypes = ['adtech', 'ai', 'data'];
     if (ctx.user.is_mapped && !ctx.user.is_member && ctx.company?.type && vendorTypes.includes(ctx.company.type)) {
@@ -351,11 +369,12 @@ export class OutboundPlanner {
           priority_score: 75,
           alternative_goals: goals.filter(g => g.id !== vendorGoal.id).slice(0, 3),
           decision_method: 'rule_match',
+          channel: 'slack',
         };
       }
     }
 
-    // PRIORITY 5: Working group discovery (for engaged users with none)
+    // PRIORITY 6: Working group discovery (for engaged users with none)
     // Skip for committee leaders - they lead working groups even if not counted as members
     // Note: Leaders are now included in working_group_count via the query, but this explicit
     // check is kept for clarity and defense against query changes
@@ -370,11 +389,12 @@ export class OutboundPlanner {
           priority_score: 70,
           alternative_goals: goals.filter(g => g.id !== wgGoal.id).slice(0, 3),
           decision_method: 'rule_match',
+          channel: 'slack',
         };
       }
     }
 
-    // PRIORITY 5.5: Persona-based working group recommendation (for users with persona but no groups)
+    // PRIORITY 7: Persona-based working group recommendation (for users with persona but no groups)
     if (caps && caps.account_linked && !caps.is_committee_leader && caps.working_group_count === 0 && ctx.company?.persona) {
       const personaGoal = goals.find(g =>
         g.requires_persona?.includes(ctx.company!.persona!)
@@ -386,11 +406,12 @@ export class OutboundPlanner {
           priority_score: 72,
           alternative_goals: goals.filter(g => g.id !== personaGoal.id).slice(0, 3),
           decision_method: 'rule_match',
+          channel: 'slack',
         };
       }
     }
 
-    // PRIORITY 6: Re-engagement for dormant users
+    // PRIORITY 8: Re-engagement for dormant users
     if (caps && caps.last_active_days_ago !== null && caps.last_active_days_ago > 30) {
       const reengageGoal = goals.find(g =>
         g.name.toLowerCase().includes('re-engage') || g.name.toLowerCase().includes('dormant')
@@ -402,6 +423,7 @@ export class OutboundPlanner {
           priority_score: 60,
           alternative_goals: goals.filter(g => g.id !== reengageGoal.id).slice(0, 3),
           decision_method: 'rule_match',
+          channel: 'slack',
         };
       }
     }
@@ -416,6 +438,7 @@ export class OutboundPlanner {
           priority_score: infoGoal.base_priority,
           alternative_goals: goals.filter(g => g.id !== infoGoal.id).slice(0, 3),
           decision_method: 'rule_match',
+          channel: 'slack',
         };
       }
     }
@@ -458,6 +481,7 @@ export class OutboundPlanner {
         priority_score: sorted[0].base_priority,
         alternative_goals: sorted.slice(1, 4),
         decision_method: 'rule_match',
+        channel: 'slack', // Will be overridden by caller
       };
     }
   }
@@ -578,6 +602,7 @@ Respond ONLY with valid JSON (no markdown code blocks):
         priority_score: selectedGoal.base_priority,
         alternative_goals: alternativeGoals,
         decision_method: 'llm',
+        channel: 'slack', // Will be overridden by caller
       };
     } catch (error) {
       logger.warn({
@@ -590,6 +615,7 @@ Respond ONLY with valid JSON (no markdown code blocks):
         priority_score: goals[0].base_priority,
         alternative_goals: goals.slice(1, 4),
         decision_method: 'llm',
+        channel: 'slack', // Will be overridden by caller
       };
     }
   }

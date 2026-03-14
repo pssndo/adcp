@@ -13,8 +13,8 @@ RUN npm ci --ignore-scripts
 # Copy source code
 COPY . .
 
-# Build the TypeScript server
-RUN npm run build
+# Build the TypeScript server (increase heap for large tsc compilation)
+RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build
 
 # Pre-clone external repos stage (runs in parallel conceptually, deps only on git)
 FROM alpine:3.19 AS repos
@@ -94,6 +94,7 @@ RUN npm ci --omit=dev --ignore-scripts
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/server/public ./server/public
 COPY --from=builder /app/server/src/db/migrations ./dist/db/migrations
+COPY --from=builder /app/server/src/creative-agent/reference-formats.json ./dist/creative-agent/
 COPY --from=builder /app/static ./static
 COPY --from=builder /app/docs ./docs
 

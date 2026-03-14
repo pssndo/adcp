@@ -11,6 +11,7 @@ primary_region = 'iad'
 # If this fails, the deployment is rolled back automatically
 [deploy]
   release_command = "node dist/db/migrate.js"
+  release_command_timeout = "15m"
   strategy = "rolling"
 
 [env]
@@ -30,7 +31,7 @@ primary_region = 'iad'
   [[http_service.checks]]
     interval = "15s"
     timeout = "5s"
-    grace_period = "30s"
+    grace_period = "120s"
     method = "GET"
     path = "/health"
     protocol = "http"

@@ -236,6 +236,11 @@ export const ROUTING_RULES = {
       tools: ['search_resources', 'web_search'],
       description: 'Industry news and trends',
     },
+    certification: {
+      patterns: ['certification', 'certify', 'certified', 'certificate', 'academy', 'training', 'course', 'module', 'lesson', 'exam', 'learn adcp', 'get certified', 'capstone', 'badge', 'assess my level', 'placement test', 'test out'],
+      tools: ['list_certification_tracks', 'get_certification_module', 'start_certification_module', 'complete_certification_module', 'get_learner_progress', 'test_out_modules', 'start_certification_exam', 'complete_certification_exam'],
+      description: 'AdCP Academy — learning modules, exercises, placement assessment, and exams',
+    },
   },
 
   /**
@@ -302,8 +307,8 @@ Use these insights to:
  */
 function buildRoutingPrompt(ctx: RoutingContext): string {
   const isAAOAdmin = ctx.isAAOAdmin ?? false;
-  const isMember = !!ctx.memberContext?.workos_user?.workos_user_id;
-  const isLinked = isMember;
+  const isMember = ctx.memberContext?.is_member ?? false;
+  const isLinked = !!ctx.memberContext?.workos_user?.workos_user_id;
 
   // Build tool SET descriptions - router selects categories, not individual tools
   const toolSetsSection = getToolSetDescriptionsForRouter(isAAOAdmin);

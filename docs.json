@@ -59,6 +59,8 @@
             "group": "Getting Started",
             "pages": [
               "docs/intro",
+              "docs/agentic-advertising",
+              "docs/faq",
               "docs/protocol/architecture",
               "docs/quickstart",
               {
@@ -87,7 +89,8 @@
                 "group": "Understanding AdCP",
                 "pages": [
                   "docs/building/understanding/index",
-                  "docs/building/understanding/protocol-comparison"
+                  "docs/building/understanding/protocol-comparison",
+                  "docs/building/understanding/adcp-vs-openrtb"
                 ]
               },
               "docs/building/schemas-and-sdks",
@@ -123,6 +126,7 @@
             "group": "Governance Protocol",
             "pages": [
               "docs/governance/overview",
+              "docs/governance/policy-registry",
               {
                 "group": "Property Governance",
                 "pages": [
@@ -167,6 +171,24 @@
                   "docs/governance/creative/index",
                   "docs/governance/creative/get_creative_features",
                   "docs/governance/creative/provenance-verification"
+                ]
+              },
+              {
+                "group": "Campaign Governance",
+                "pages": [
+                  "docs/governance/campaign/index",
+                  "docs/governance/campaign/safety-model",
+                  "docs/governance/campaign/specification",
+                  {
+                    "group": "Tasks",
+                    "pages": [
+                      "docs/governance/campaign/tasks/index",
+                      "docs/governance/campaign/tasks/sync_plans",
+                      "docs/governance/campaign/tasks/report_plan_outcome",
+                      "docs/governance/campaign/tasks/check_governance",
+                      "docs/governance/campaign/tasks/get_plan_audit_logs"
+                    ]
+                  }
                 ]
               }
             ]
@@ -246,8 +268,6 @@
                   "docs/media-buy/task-reference/list_creative_formats",
                   "docs/media-buy/task-reference/create_media_buy",
                   "docs/media-buy/task-reference/sync_catalogs",
-                  "docs/media-buy/task-reference/list_creatives",
-                  "docs/media-buy/task-reference/sync_creatives",
                   "docs/media-buy/task-reference/get_media_buys",
                   "docs/media-buy/task-reference/get_media_buy_delivery",
                   "docs/media-buy/task-reference/update_media_buy",
@@ -315,11 +335,13 @@
               "docs/creative/formats",
               "docs/creative/asset-types",
               "docs/creative/creative-manifests",
+              "docs/creative/private-assets",
               "docs/creative/universal-macros",
               "docs/creative/implementing-creative-agents",
               "docs/creative/generative-creative",
               "docs/creative/template-format-ids",
               "docs/creative/catalogs",
+              "docs/creative/catalog-schemas",
               "docs/creative/accessibility",
               "docs/creative/provenance",
               {
@@ -340,6 +362,8 @@
                   "docs/creative/task-reference/preview_creative",
                   "docs/creative/task-reference/preview_creative-advanced",
                   "docs/creative/task-reference/list_creative_formats",
+                  "docs/creative/task-reference/list_creatives",
+                  "docs/creative/task-reference/sync_creatives",
                   "docs/creative/task-reference/get_creative_delivery"
                 ]
               }
@@ -350,6 +374,11 @@
             "pages": [
               "docs/guides/index",
               "docs/guides/commerce-media",
+              "docs/guides/commerce-media",
+              "docs/guides/ai-media-buying",
+              "docs/guides/seller-integration",
+              "docs/guides/how-agents-communicate",
+              "docs/guides/industry-landscape",
               "docs/guides/newsletter-advertising"
             ]
           },
@@ -379,6 +408,51 @@
             "group": "Community",
             "pages": [
               "docs/community/working-group"
+            ]
+          },
+          {
+            "group": "Certification",
+            "pages": [
+              "docs/learning/overview",
+              "docs/learning/instructional-design",
+              {
+                "group": "Basics (free)",
+                "pages": [
+                  "docs/learning/foundations/a1-agentic-advertising",
+                  "docs/learning/foundations/a2-protocol-architecture",
+                  "docs/learning/foundations/a3-ecosystem-governance"
+                ]
+              },
+              {
+                "group": "Role tracks",
+                "pages": [
+                  "docs/learning/tracks/publisher",
+                  "docs/learning/tracks/buyer",
+                  "docs/learning/tracks/platform"
+                ]
+              },
+              {
+                "group": "Specialist modules",
+                "pages": [
+                  "docs/learning/specialist/media-buy",
+                  "docs/learning/specialist/creative",
+                  "docs/learning/specialist/signals",
+                  "docs/learning/specialist/governance",
+                  "docs/learning/specialist/sponsored-intelligence"
+                ]
+              },
+              {
+                "group": "Policies",
+                "pages": [
+                  "docs/learning/policies/nondiscrimination",
+                  "docs/learning/policies/learner-records",
+                  "docs/learning/policies/complaints",
+                  "docs/learning/policies/conflict-of-interest",
+                  "docs/learning/policies/intellectual-property",
+                  "docs/learning/policies/personnel-qualifications",
+                  "docs/learning/policies/refund"
+                ]
+              }
             ]
           }
         ]
@@ -390,6 +464,8 @@
             "group": "Getting Started",
             "pages": [
               "docs/intro",
+              "docs/agentic-advertising",
+              "docs/faq",
               "docs/protocol/architecture",
               "docs/quickstart",
               {
@@ -418,7 +494,8 @@
                 "group": "Understanding AdCP",
                 "pages": [
                   "docs/building/understanding/index",
-                  "docs/building/understanding/protocol-comparison"
+                  "docs/building/understanding/protocol-comparison",
+                  "docs/building/understanding/adcp-vs-openrtb"
                 ]
               },
               "docs/building/schemas-and-sdks",
@@ -454,6 +531,7 @@
             "group": "Governance Protocol",
             "pages": [
               "docs/governance/overview",
+              "docs/governance/policy-registry",
               {
                 "group": "Property Governance",
                 "pages": [
@@ -498,6 +576,24 @@
                   "docs/governance/creative/index",
                   "docs/governance/creative/get_creative_features",
                   "docs/governance/creative/provenance-verification"
+                ]
+              },
+              {
+                "group": "Campaign Governance",
+                "pages": [
+                  "docs/governance/campaign/index",
+                  "docs/governance/campaign/safety-model",
+                  "docs/governance/campaign/specification",
+                  {
+                    "group": "Tasks",
+                    "pages": [
+                      "docs/governance/campaign/tasks/index",
+                      "docs/governance/campaign/tasks/sync_plans",
+                      "docs/governance/campaign/tasks/report_plan_outcome",
+                      "docs/governance/campaign/tasks/check_governance",
+                      "docs/governance/campaign/tasks/get_plan_audit_logs"
+                    ]
+                  }
                 ]
               }
             ]
@@ -577,8 +673,6 @@
                   "docs/media-buy/task-reference/list_creative_formats",
                   "docs/media-buy/task-reference/create_media_buy",
                   "docs/media-buy/task-reference/sync_catalogs",
-                  "docs/media-buy/task-reference/list_creatives",
-                  "docs/media-buy/task-reference/sync_creatives",
                   "docs/media-buy/task-reference/get_media_buys",
                   "docs/media-buy/task-reference/get_media_buy_delivery",
                   "docs/media-buy/task-reference/update_media_buy",
@@ -646,11 +740,13 @@
               "docs/creative/formats",
               "docs/creative/asset-types",
               "docs/creative/creative-manifests",
+              "docs/creative/private-assets",
               "docs/creative/universal-macros",
               "docs/creative/implementing-creative-agents",
               "docs/creative/generative-creative",
               "docs/creative/template-format-ids",
               "docs/creative/catalogs",
+              "docs/creative/catalog-schemas",
               "docs/creative/accessibility",
               "docs/creative/provenance",
               {
@@ -671,6 +767,8 @@
                   "docs/creative/task-reference/preview_creative",
                   "docs/creative/task-reference/preview_creative-advanced",
                   "docs/creative/task-reference/list_creative_formats",
+                  "docs/creative/task-reference/list_creatives",
+                  "docs/creative/task-reference/sync_creatives",
                   "docs/creative/task-reference/get_creative_delivery"
                 ]
               }
@@ -681,6 +779,10 @@
             "pages": [
               "docs/guides/index",
               "docs/guides/commerce-media",
+              "docs/guides/ai-media-buying",
+              "docs/guides/seller-integration",
+              "docs/guides/how-agents-communicate",
+              "docs/guides/industry-landscape",
               "docs/guides/newsletter-advertising"
             ]
           },
@@ -710,6 +812,51 @@
             "group": "Community",
             "pages": [
               "docs/community/working-group"
+            ]
+          },
+          {
+            "group": "Certification",
+            "pages": [
+              "docs/learning/overview",
+              "docs/learning/instructional-design",
+              {
+                "group": "Basics (free)",
+                "pages": [
+                  "docs/learning/foundations/a1-agentic-advertising",
+                  "docs/learning/foundations/a2-protocol-architecture",
+                  "docs/learning/foundations/a3-ecosystem-governance"
+                ]
+              },
+              {
+                "group": "Role tracks",
+                "pages": [
+                  "docs/learning/tracks/publisher",
+                  "docs/learning/tracks/buyer",
+                  "docs/learning/tracks/platform"
+                ]
+              },
+              {
+                "group": "Specialist modules",
+                "pages": [
+                  "docs/learning/specialist/media-buy",
+                  "docs/learning/specialist/creative",
+                  "docs/learning/specialist/signals",
+                  "docs/learning/specialist/governance",
+                  "docs/learning/specialist/sponsored-intelligence"
+                ]
+              },
+              {
+                "group": "Policies",
+                "pages": [
+                  "docs/learning/policies/nondiscrimination",
+                  "docs/learning/policies/learner-records",
+                  "docs/learning/policies/complaints",
+                  "docs/learning/policies/conflict-of-interest",
+                  "docs/learning/policies/intellectual-property",
+                  "docs/learning/policies/personnel-qualifications",
+                  "docs/learning/policies/refund"
+                ]
+              }
             ]
           }
         ]
@@ -950,6 +1097,14 @@
     {
       "source": "/docs/media-buy/advanced-topics/orchestrator-design",
       "destination": "/docs/building/implementation/orchestrator-design"
+    },
+    {
+      "source": "/docs/media-buy/task-reference/list_creatives",
+      "destination": "/docs/creative/task-reference/list_creatives"
+    },
+    {
+      "source": "/docs/media-buy/task-reference/sync_creatives",
+      "destination": "/docs/creative/task-reference/sync_creatives"
     }
   ],
   "modeToggle": {

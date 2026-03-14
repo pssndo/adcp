@@ -15,12 +15,34 @@ import { invalidateUnifiedUsersCache } from '../cache/unified-users.js';
 import { invalidateMemberContextCache } from '../addie/index.js';
 import { invalidateAdminStatusCache, invalidateWebAdminStatusCache } from '../addie/mcp/admin-tools.js';
 import { getPool } from '../db/client.js';
+import { markLinkAccountGoalsSucceeded } from '../db/outbound-db.js';
 import { workos } from '../auth/workos-client.js';
 import { isFreeEmailDomain } from '../utils/email-domain.js';
 import type { SyncSlackUsersResult } from './types.js';
 
 const slackDb = new SlackDatabase();
 const workingGroupDb = new WorkingGroupDatabase();
+
+/**
+ * Determine the role for a new org member. If the org has no admin or owner,
+ * the first member gets 'owner' to prevent ownerless orgs.
+ */
+async function roleForNewMember(orgId: string): Promise<'owner' | 'member'> {
+  if (!workos) return 'member';
+  try {
+    const memberships = await workos.userManagement.listOrganizationMemberships({
+      organizationId: orgId,
+      limit: 100,
+    });
+    const hasAdmin = memberships.data.some((m) => {
+      const role = m.role?.slug;
+      return role === 'admin' || role === 'owner';
+    });
+    return hasAdmin ? 'member' : 'owner';
+  } catch {
+    return 'member';
+  }
+}
 
 /**
  * Sync all Slack users to the database
@@ -51,11 +73,11 @@ export async function syncSlackUsers(): Promise<SyncSlackUsersResult> {
   };
 
   try {
-    logger.info('Starting Slack user sync');
+    logger.debug('Starting Slack user sync');
 
     // Fetch all users from Slack
     const slackUsers = await getSlackUsers();
-    logger.info({ count: slackUsers.length }, 'Fetched users from Slack');
+    logger.debug({ count: slackUsers.length }, 'Fetched users from Slack');
 
     // Get existing mappings to track new vs updated
     const existingBefore = new Set<string>();
@@ -101,7 +123,11 @@ export async function syncSlackUsers(): Promise<SyncSlackUsersResult> {
     // - user.created webhook (website user signs up)
     // - organization_membership.created webhook (user joins org)
     // For historical users, use POST /api/admin/slack/auto-link-suggested
-    logger.info(result, 'Slack user sync completed');
+    if (result.new_users > 0) {
+      logger.info(result, 'Slack user sync completed');
+    } else {
+      logger.debug(result, 'Slack user sync completed');
+    }
     return result;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -631,25 +657,27 @@ export async function checkAndAssignOrganizationByDomain(
       return null;
     }
 
+    const role = await roleForNewMember(targetOrgId);
+
     logger.info(
-      { workosUserId, email, domain, targetOrgId, targetOrgName, currentOrgId, currentOrgName },
+      { workosUserId, email, domain, targetOrgId, targetOrgName, currentOrgId, currentOrgName, role },
       'Adding user to organization based on email domain'
     );
 
     await workos.userManagement.createOrganizationMembership({
       userId: workosUserId,
       organizationId: targetOrgId,
-      roleSlug: 'member',
+      roleSlug: role,
     });
 
     await pool.query(`
-      INSERT INTO organization_memberships (workos_user_id, workos_organization_id, email, created_at, updated_at, synced_at)
-      SELECT $1, $2, email, NOW(), NOW(), NOW()
+      INSERT INTO organization_memberships (workos_user_id, workos_organization_id, email, role, created_at, updated_at, synced_at)
+      SELECT $1, $2, email, $3, NOW(), NOW(), NOW()
       FROM organization_memberships
       WHERE workos_user_id = $1
       LIMIT 1
       ON CONFLICT (workos_user_id, workos_organization_id) DO NOTHING
-    `, [workosUserId, targetOrgId]);
+    `, [workosUserId, targetOrgId, role]);
 
     return {
       assigned: true,
@@ -675,6 +703,7 @@ export async function autoLinkUnmappedSlackUsers(): Promise<{
   linked: number;
   chapters_joined: number;
   organizations_assigned: number;
+  pending_org_prospects_set: number;
   errors: number;
 }> {
   // Ensure all current workspace members have rows before attempting to link.
@@ -693,6 +722,11 @@ export async function autoLinkUnmappedSlackUsers(): Promise<{
 
   const aaoEmailToUserId = await buildAaoEmailToUserIdMap();
   const mappedWorkosUserIds = await slackDb.getMappedWorkosUserIds();
+
+  // Set pending_organization_id for unmapped Slack users whose email domain matches an org.
+  // This is a DB-only operation and is safe regardless of whether Slack is configured.
+  // It is idempotent and covers users who joined Slack before the listener was active.
+  const backfillResult = await slackDb.backfillPendingOrganizations();
 
   let linked = 0;
   let chaptersJoined = 0;
@@ -716,6 +750,13 @@ export async function autoLinkUnmappedSlackUsers(): Promise<{
       // Clear cached admin status so Addie recognizes newly linked admins immediately.
       invalidateAdminStatusCache(slackUser.slack_user_id);
 
+      // Mark any pending "Link Account" goals as succeeded so Addie stops following up
+      try {
+        await markLinkAccountGoalsSucceeded(slackUser.slack_user_id);
+      } catch (goalErr) {
+        logger.warn({ error: goalErr, slackUserId: slackUser.slack_user_id }, 'Failed to mark Link Account goal as success during auto-link');
+      }
+
       const chapterResult = await syncUserToChaptersFromSlackChannels(workosUserId, slackUser.slack_user_id);
       chaptersJoined += chapterResult.chapters_joined;
 
@@ -732,5 +773,143 @@ export async function autoLinkUnmappedSlackUsers(): Promise<{
     invalidateMemberContextCache();
   }
 
-  return { linked, chapters_joined: chaptersJoined, organizations_assigned: orgsAssigned, errors };
+  return {
+    linked,
+    chapters_joined: chaptersJoined,
+    organizations_assigned: orgsAssigned,
+    pending_org_prospects_set: backfillResult.usersLinked,
+    errors,
+  };
+}
+
+/**
+ * Auto-add Slack users with WorkOS accounts to their org based on verified email domains.
+ * Covers users who were linked before their org's domain was added/verified,
+ * or who have no existing organization membership to trigger checkAndAssignOrganizationByDomain.
+ *
+ * Does not call the Slack API — no isSlackConfigured() guard needed. If slack_user_mappings
+ * is empty (Slack not configured), the query returns zero rows and is a no-op.
+ *
+ * Complements the slack-auto-link job: that job populates pending_organization_id for
+ * unmapped users; this job promotes already-mapped users to full WorkOS org members.
+ */
+export async function autoAddVerifiedDomainUsersAsMembers(): Promise<{
+  added: number;
+  skipped: number;
+  errors: number;
+}> {
+  const pool = getPool();
+
+  const result = await pool.query<{
+    workos_organization_id: string;
+    org_name: string;
+    domain: string;
+    users: Array<{ email: string; name: string | null; workos_user_id: string }>;
+  }>(`
+    WITH verified_domain_orgs AS (
+      SELECT
+        od.workos_organization_id,
+        LOWER(od.domain) as domain,
+        o.name as org_name
+      FROM organization_domains od
+      JOIN organizations o ON o.workos_organization_id = od.workos_organization_id
+      WHERE od.verified = true
+    ),
+    domain_users_with_workos AS (
+      SELECT
+        vdo.workos_organization_id,
+        vdo.org_name,
+        vdo.domain,
+        sum.slack_email,
+        sum.slack_real_name,
+        sum.workos_user_id
+      FROM verified_domain_orgs vdo
+      JOIN slack_user_mappings sum ON LOWER(SPLIT_PART(sum.slack_email, '@', 2)) = vdo.domain
+      WHERE sum.workos_user_id IS NOT NULL
+        AND sum.slack_is_bot = false
+        AND sum.slack_is_deleted = false
+    )
+    SELECT
+      workos_organization_id,
+      org_name,
+      domain,
+      json_agg(json_build_object(
+        'email', slack_email,
+        'name', slack_real_name,
+        'workos_user_id', workos_user_id
+      )) as users
+    FROM domain_users_with_workos
+    GROUP BY workos_organization_id, org_name, domain
+  `);
+
+  let totalAdded = 0;
+  let totalSkipped = 0;
+  let totalErrors = 0;
+
+  for (const row of result.rows) {
+    const orgId = row.workos_organization_id;
+
+    const existingMemberUserIds = new Set<string>();
+    let hasAdmin = false;
+    try {
+      let after: string | undefined;
+      do {
+        const memberships = await workos.userManagement.listOrganizationMemberships({
+          organizationId: orgId,
+          limit: 100,
+          after,
+        });
+        for (const m of memberships.data) {
+          existingMemberUserIds.add(m.userId);
+          if (m.role?.slug === 'admin' || m.role?.slug === 'owner') {
+            hasAdmin = true;
+          }
+        }
+        after = memberships.listMetadata?.after ?? undefined;
+      } while (after);
+    } catch (err) {
+      logger.warn({ err, orgId }, 'Failed to list WorkOS memberships for org, skipping');
+      continue;
+    }
+
+    const users = row.users as Array<{ email: string; name: string | null; workos_user_id: string }>;
+
+    for (const user of users) {
+      if (existingMemberUserIds.has(user.workos_user_id)) {
+        totalSkipped++;
+        continue;
+      }
+
+      // First member added to an ownerless org becomes owner
+      const role = hasAdmin ? 'member' : 'owner';
+
+      try {
+        await workos.userManagement.createOrganizationMembership({
+          userId: user.workos_user_id,
+          organizationId: orgId,
+          roleSlug: role,
+        });
+        // Mirror the WorkOS membership locally so code reading organization_memberships
+        // sees the change immediately rather than waiting for the webhook to fire.
+        await pool.query(`
+          INSERT INTO organization_memberships (workos_user_id, workos_organization_id, email, role, created_at, updated_at, synced_at)
+          VALUES ($1, $2, $3, $4, NOW(), NOW(), NOW())
+          ON CONFLICT (workos_user_id, workos_organization_id) DO NOTHING
+        `, [user.workos_user_id, orgId, user.email, role]);
+        totalAdded++;
+        if (!hasAdmin) hasAdmin = true; // Only promote the first one
+        logger.info({ orgId, orgName: row.org_name, email: user.email, role }, 'Auto-added domain user as org member');
+      } catch (err: unknown) {
+        const code = (err as { code?: string })?.code;
+        if (code === 'organization_membership_already_exists') {
+          totalSkipped++;
+        } else {
+          logger.error({ err, orgId, email: user.email }, 'Failed to create org membership for domain user');
+          totalErrors++;
+        }
+      }
+    }
+  }
+
+  return { added: totalAdded, skipped: totalSkipped, errors: totalErrors };
 }

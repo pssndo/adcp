@@ -122,6 +122,15 @@ Description of change.
 
 Types: `patch` (fixes), `minor` (new features), `major` (breaking), `--empty` (no protocol impact)
 
+**Use `--empty` (no package entry) for everything that isn't a protocol change:**
+- Addie (any server-side AI behavior, tools, routing, bolt app)
+- Website / admin UI / member pages
+- Documentation updates (docs/, mintlify)
+- Infrastructure, deployment, migrations
+- Internal tooling and scripts
+
+Only use `patch`/`minor`/`major` when the change affects the published AdCP protocol spec — schemas, task definitions, API reference.
+
 ### Semantic Versioning for Schemas
 - **PATCH**: Fix typos, clarify descriptions
 - **MINOR**: Add optional fields, new enum values, new tasks
@@ -243,3 +252,37 @@ mintlify dev               # Docs dev server (requires mintlify CLI)
 ### Task Reference
 - ✅ `get_products`, `create_media_buy`, `list_creative_formats`
 - ❌ `discover_products`, `get_avails` (don't exist)
+
+## Certification Program
+
+AgenticAdvertising.org runs a three-tier certification program (Basics → Practitioner → Specialist) taught by Addie through interactive chat. Key files:
+
+- **Curriculum**: `server/src/addie/mcp/certification-tools.ts` (teaching tools, module resources, scoring)
+- **Teaching methodology**: `TEACHING_METHODOLOGY`, `BUILD_PROJECT_METHODOLOGY`, `CAPSTONE_METHODOLOGY` constants in certification-tools.ts
+- **Framework doc**: `docs/learning/instructional-design.mdx` (authoritative source for teaching methodology)
+- **Policies**: `docs/learning/policies/` (nondiscrimination, learner records, complaints, conflict of interest, IP, personnel)
+- **Database**: `server/src/db/certification-db.ts` (progress, credentials, tracks)
+- **API routes**: `server/src/routes/certification.ts` (public/authenticated endpoints)
+- **UI**: `server/public/certification.html` (dashboard, LinkedIn sharing, credential display)
+
+### Certification impact checklist
+
+When making protocol changes (new tasks, schema changes, renamed fields, removed features):
+
+1. **Check affected modules** — Which certification modules teach the changed concepts? Update `MODULE_RESOURCES` links and teaching context in `certification-tools.ts` if needed.
+2. **Consider continuing education** — Breaking changes (`major` version bumps) that alter core concepts may require notifying credential holders. Credentials reference the protocol version at time of issuance.
+3. **Update learning resources** — If you add or move documentation pages referenced in `MODULE_RESOURCES`, update the URLs.
+
+When updating teaching methodology:
+
+4. **Keep framework aligned** — When updating `TEACHING_METHODOLOGY`, `BUILD_PROJECT_METHODOLOGY`, or `CAPSTONE_METHODOLOGY` constants in `certification-tools.ts`, verify alignment with `docs/learning/instructional-design.mdx` and update both.
+5. **Update policies if needed** — Changes to assessment, data handling, or personnel processes may require updates to the corresponding policy page in `docs/learning/policies/`.
+
+When building new features (member profiles, dashboards, community pages):
+
+6. **Surface credentials** — If the feature displays user identity or professional context, consider showing earned credentials.
+7. **Link to certification** — New capability areas may warrant new modules or tracks. Note this in the changeset description so it can be planned.
+
+### Security
+
+Module and exam completion is only available through Addie's tool calls — never through REST API. This prevents users from self-reporting scores without actual assessment.

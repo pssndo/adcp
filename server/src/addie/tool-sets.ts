@@ -35,6 +35,15 @@ export const ALWAYS_AVAILABLE_TOOLS = [
   'get_account_link',    // Check user's linked status
   'capture_learning',    // Save insights from conversations
   'web_search',          // Built-in Claude tool, always available
+  'set_outreach_preference', // Users can always opt out of proactive outreach
+];
+
+/**
+ * Tools excluded from ALWAYS_AVAILABLE in public channels
+ * to prevent enrollment pitching where it doesn't belong
+ */
+const ENROLLMENT_TOOLS = [
+  'get_account_link',
 ];
 
 /**
@@ -86,6 +95,9 @@ export const TOOL_SETS: Record<string, ToolSet> = {
 
   directory: {
     name: 'directory',
+    // NOTE: This tool set is a superset of DIRECTORY_TOOLS in directory-tools.ts.
+    // Anonymous web/MCP users get only the DIRECTORY_TOOLS subset (read-only public lookups).
+    // This set adds member-scoped tools (search_members, request_introduction) and brand tools.
     description: 'The searchable partner/vendor directory — find partners, vendors, consultants, service providers, and member organizations. Also: request introductions, browse the member directory, research brands, look up brand assets, and find registry gaps',
     tools: [
       'search_members',
@@ -302,6 +314,25 @@ export const TOOL_SETS: Record<string, ToolSet> = {
       'rename_working_group',
       'list_missing_brands',
       'list_missing_properties',
+      'get_outreach_stats',
+      'get_outreach_history',
+      'send_outreach',
+      'lookup_person',
+      'get_action_items',
+    ],
+    adminOnly: true,
+  },
+
+  outreach: {
+    name: 'outreach',
+    description: 'SDR outreach operations — view outreach stats, check history, send outreach, look up people, manage action items (admin only)',
+    tools: [
+      'get_outreach_stats',
+      'get_outreach_history',
+      'send_outreach',
+      'lookup_person',
+      'get_action_items',
+      'get_account',
     ],
     adminOnly: true,
   },
@@ -311,6 +342,21 @@ export const TOOL_SETS: Record<string, ToolSet> = {
     description: 'Send direct messages to other AgenticAdvertising.org members, forward conversation context, and collaborate across the community',
     tools: [
       'send_member_dm',
+    ],
+  },
+
+  certification: {
+    name: 'certification',
+    description: 'AdCP Academy — list tracks, teach modules, run exercises, placement assessment, and track learner progress',
+    tools: [
+      'list_certification_tracks',
+      'get_certification_module',
+      'start_certification_module',
+      'complete_certification_module',
+      'get_learner_progress',
+      'test_out_modules',
+      'start_certification_exam',
+      'complete_certification_exam',
     ],
   },
 };
@@ -326,14 +372,21 @@ export function getToolsInSet(setName: string): string[] {
 /**
  * Get all tool names for multiple sets, including always-available tools
  */
-export function getToolsForSets(setNames: string[], isAAOAdmin: boolean = false): string[] {
-  const tools = new Set<string>(ALWAYS_AVAILABLE_TOOLS);
+export function getToolsForSets(setNames: string[], isAAOAdmin: boolean = false, isPublicChannel: boolean = false): string[] {
+  const alwaysAvailable = isPublicChannel
+    ? ALWAYS_AVAILABLE_TOOLS.filter(t => !ENROLLMENT_TOOLS.includes(t))
+    : ALWAYS_AVAILABLE_TOOLS;
+  const tools = new Set<string>(alwaysAvailable);
 
   for (const setName of setNames) {
     const toolSet = TOOL_SETS[setName];
     if (toolSet) {
       // Skip admin-only sets if user is not admin
       if (toolSet.adminOnly && !isAAOAdmin) {
+        continue;
+      }
+      // Skip billing set in public channels
+      if (isPublicChannel && setName === 'billing') {
         continue;
       }
       for (const tool of toolSet.tools) {
