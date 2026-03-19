@@ -246,7 +246,7 @@ Several email clients request images before the subscriber actually opens the em
 
 **Other clients** — Yahoo Mail and some corporate email gateways also proxy or pre-fetch images with varying behavior. Some corporate environments block external images entirely, producing zero impressions regardless of opens.
 
-Sellers should document their pre-fetch filtering methodology in `delivery_measurement.notes` on products so buyers understand how reported impressions are counted.
+Sellers should document their pre-fetch filtering methodology in `delivery_measurement.notes` on products so buyers understand how reported impressions are counted. Since `delivery_measurement` is optional on products, newsletter publishers who rely on `ext.newsletter_delivery` for email-native metrics can omit it entirely — the extension's per-sendout, per-client, and per-device breakdowns provide richer measurement than the generic field.
 
 ## Creative Manifests
 
@@ -359,6 +359,38 @@ Best practices for dark mode compatible creatives:
 - Avoid images that rely on a specific background color
 - Test with both light and dark rendering
 - Products with `ext.newsletter.dark_mode_support: true` indicate the publisher's template handles dark mode gracefully
+
+## Disclosure Capabilities
+
+Email formats can declare what [AI disclosure positions and persistence modes](/docs/creative/disclosure) they support via `disclosure_capabilities`. This is relevant when buyer creatives include `provenance` metadata indicating AI-generated content — jurisdictions may require the ad to display a persistent disclosure label.
+
+Email formats typically support these disclosure positions:
+
+| Position | Description | Persistence modes |
+|---|---|---|
+| `text_prefix` | Label prepended to headline (e.g., "AI-generated: ...") | `continuous` |
+| `footer` | Disclosure line below the ad content | `continuous`, `initial` |
+| `corner_badge` | Visual badge overlaid on the creative image | `continuous` |
+
+Example declaration on a native email format:
+
+```json
+{
+  "format_id": {
+    "agent_url": "https://ads.publisher.com",
+    "id": "native_email_standard"
+  },
+  "type": "email",
+  "disclosure_capabilities": [
+    { "position": "text_prefix", "persistence": ["continuous"] },
+    { "position": "footer", "persistence": ["continuous", "initial"] }
+  ]
+}
+```
+
+Since email is static once rendered (no JavaScript to toggle visibility), most email disclosure positions support only `continuous` persistence — the label remains visible for the lifetime of the email. The `initial` mode on footer positions means the disclosure appears in the initial view but may scroll out of view.
+
+When a buyer's creative includes `provenance.disclosure.jurisdictions[].render_guidance`, the publisher uses the guidance's `persistence` and `positions` preferences to select the appropriate disclosure rendering.
 
 ## Common Email Dimensions
 

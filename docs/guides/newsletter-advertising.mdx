@@ -121,10 +121,6 @@ The most common newsletter ad format. The publisher renders the ad to match edit
       "min_spend_per_package": 500
     }
   ],
-  "delivery_measurement": {
-    "provider": "Publisher email platform",
-    "notes": "Impressions counted when subscriber email client loads the creative image. Clicks tracked via redirect URLs."
-  },
   "ext": {
     "newsletter": {
       "subscriber_count": 85000,
@@ -334,6 +330,7 @@ A media buy books specific sendouts and placements. The `packages` target produc
 ```json
 {
   "buyer_ref": "saas_launch_q1",
+  "plan_id": "plan_acme_q1_2026",
   "brand": {
     "domain": "acmecloud.com"
   },
@@ -346,6 +343,8 @@ A media buy books specific sendouts and placements. The `packages` target produc
       "pricing_option_id": "native_cpm",
       "budget": 3220,
       "impressions": 92000,
+      "start_time": "2026-02-24T00:00:00Z",
+      "end_time": "2026-03-07T23:59:59Z",
       "pacing": "even",
       "creative_assignments": [
         {
@@ -373,14 +372,16 @@ A media buy books specific sendouts and placements. The `packages` target produc
 ```
 
 Key points:
-- **`impressions`** — the buyer specifies exactly how many impressions it wants. The Tech Digest package books 92,000 impressions across ~10 weekday sendouts in the campaign window (Feb 24 – Mar 24).
+- **`plan_id`** — references a [campaign governance](/docs/governance/campaign-governance) plan. When provided, the buyer's orchestrator calls `check_governance` before submitting the media buy to validate budget, channels, flight dates, and approved sellers against the plan. The seller receives the buy only if governance approves.
+- **`impressions`** — the buyer specifies exactly how many impressions it wants. The Tech Digest package books 92,000 impressions across ~10 weekday sendouts in the campaign window.
 - **`budget`** — calculated from impressions and CPM: 92,000 impressions at $35 CPM = $3,220. The budget is required and acts as a spend cap.
+- **`start_time` / `end_time` on packages** — packages can have their own flight dates within the media buy's overall dates. This lets buyers scope a package to a specific set of sendouts (e.g., first two weeks only) while other packages in the same buy cover a different window.
 - **`creative_assignments[].placement_ids`** — targets the creative to a specific placement. The buyer only books `above_fold_native`, not all three placements.
 - **`pacing: "even"`** — distributes delivery evenly across sendouts in the date range. The seller allocates impressions per sendout based on availability — for Feb 24 only 42,100 are available (see [partial availability](#partial-inventory-availability)), while other sendouts have full capacity.
 
 ### Supply Creatives
 
-For native placements, the buyer provides creative assets that the publisher renders into their template:
+For native placements, the buyer provides creative assets that the publisher renders into their template. Buyers can also reference creatives from their [creative library](/docs/creative/creative-library) using `creative_id` and `concept_id` — this is especially useful when the same native ad (headline, body, CTA, image) runs across multiple sendouts or newsletters. The library handles versioning and reuse without re-uploading assets each time.
 
 ```json
 {
@@ -569,6 +570,7 @@ Apple Mail Privacy Protection (MPP) pre-fetches tracking pixels, inflating open 
 5. **Declare `rendering_constraints`** on placements — file size limits, supported MIME types, and CSS requirements prevent creative rejection
 6. **Include `native_spec`** on native placements — character limits and layout IDs ensure buyer creatives render correctly
 7. **Set `channels: ["email"]`** and `property_type: "newsletter"` so buyers can filter by channel
+8. **`delivery_measurement` is optional** — newsletter publishers can omit it from products and rely on `ext.newsletter_delivery` for email-native measurement instead. If you do include it, use `notes` to document your pre-fetch filtering methodology (Apple MPP, Gmail proxy handling)
 
 ## Capability Declaration
 
@@ -579,7 +581,7 @@ Newsletter seller agents declare their support for the newsletter extension thro
   "adcp": {
     "major_versions": [3]
   },
-  "supported_protocols": ["media_buy"],
+  "supported_protocols": ["media_buy", "governance", "creative"],
   "extensions_supported": ["newsletter"],
   "media_buy": {
     "features": {
@@ -936,3 +938,5 @@ Audience-first discovery means newsletters don't need to be explicitly requested
 - [Capability Discovery](/docs/protocol/get_adcp_capabilities) — How agents declare supported extensions
 - [Signals Protocol](/docs/signals/overview) — Audience-first signal discovery and activation
 - [Audience Sync](/docs/media-buy/task-reference/sync_audiences) — Customer list upload for retargeting and suppression
+- [Campaign Governance](/docs/governance/campaign-governance) — Budget, channel, and seller compliance via governance plans
+- [Creative Library](/docs/creative/creative-library) — Store and reuse creatives across sendouts and newsletters
