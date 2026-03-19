@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "/schemas/enums/newsletter-placement-position.json",
+  "title": "Newsletter Placement Position",
+  "description": "Position of an advertising placement within an email newsletter layout",
+  "type": "string",
+  "enum": [
+    "above_fold",
+    "in_content",
+    "sidebar",
+    "footer",
+    "dedicated",
+    "sponsored_content"
+  ],
+  "enumDescriptions": {
+    "above_fold": "Top of the email, visible without scrolling in most clients",
+    "in_content": "Embedded between editorial content sections",
+    "sidebar": "Side column alongside editorial content",
+    "footer": "Bottom section of the email below editorial content",
+    "dedicated": "Entire email is a single sponsored message",
+    "sponsored_content": "Native placement styled to match editorial content"
+  }
+}

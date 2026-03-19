@@ -351,7 +351,8 @@
                   "docs/creative/channels/display",
                   "docs/creative/channels/audio",
                   "docs/creative/channels/dooh",
-                  "docs/creative/channels/carousels"
+                  "docs/creative/channels/carousels",
+                  "docs/creative/channels/email"
                 ]
               },
               {
@@ -376,7 +377,8 @@
               "docs/guides/ai-media-buying",
               "docs/guides/seller-integration",
               "docs/guides/how-agents-communicate",
-              "docs/guides/industry-landscape"
+              "docs/guides/industry-landscape",
+              "docs/guides/newsletter-advertising"
             ]
           },
           {
@@ -753,7 +755,8 @@
                   "docs/creative/channels/display",
                   "docs/creative/channels/audio",
                   "docs/creative/channels/dooh",
-                  "docs/creative/channels/carousels"
+                  "docs/creative/channels/carousels",
+                  "docs/creative/channels/email"
                 ]
               },
               {
@@ -778,7 +781,8 @@
               "docs/guides/ai-media-buying",
               "docs/guides/seller-integration",
               "docs/guides/how-agents-communicate",
-              "docs/guides/industry-landscape"
+              "docs/guides/industry-landscape",
+              "docs/guides/newsletter-advertising"
             ]
           },
           {

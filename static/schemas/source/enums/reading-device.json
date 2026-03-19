@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "/schemas/enums/reading-device.json",
+  "title": "Reading Device",
+  "description": "Device type used by a subscriber when viewing an email newsletter",
+  "type": "string",
+  "enum": [
+    "desktop",
+    "mobile",
+    "tablet",
+    "webmail",
+    "unknown"
+  ],
+  "enumDescriptions": {
+    "desktop": "Desktop or laptop email client",
+    "mobile": "Smartphone email client or mobile browser",
+    "tablet": "Tablet email client or tablet browser",
+    "webmail": "Web-based email accessed via browser (device type not determined)",
+    "unknown": "Device type could not be determined"
+  }
+}

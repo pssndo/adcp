@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "/schemas/enums/sendout-status.json",
+  "title": "Sendout Status",
+  "description": "Lifecycle status of a newsletter sendout (individual email distribution event)",
+  "type": "string",
+  "enum": [
+    "scheduled",
+    "sending",
+    "sent",
+    "cancelled"
+  ],
+  "enumDescriptions": {
+    "scheduled": "Sendout is planned but has not started delivery",
+    "sending": "Sendout is currently being distributed to subscribers",
+    "sent": "Sendout has been fully delivered to all recipients",
+    "cancelled": "Sendout was cancelled before or during delivery"
+  }
+}

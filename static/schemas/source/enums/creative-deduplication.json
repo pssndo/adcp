@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "/schemas/enums/creative-deduplication.json",
+  "title": "Creative Deduplication",
+  "description": "Policy for whether the same creative may appear on multiple placements within a single newsletter sendout",
+  "type": "string",
+  "enum": [
+    "required",
+    "preferred",
+    "none"
+  ],
+  "enumDescriptions": {
+    "required": "Each placement in the same sendout must show a distinct creative. The seller will reject a media buy that assigns the same creative to multiple placements.",
+    "preferred": "The publisher prefers distinct creatives across placements but will accept duplicates if the buyer has limited creative assets.",
+    "none": "No restrictions. The same creative may appear on any or all placements within the same sendout."
+  }
+}

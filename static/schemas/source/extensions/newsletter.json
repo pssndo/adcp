@@ -1,0 +1,102 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "/schemas/extensions/newsletter.json",
+  "title": "Newsletter Extension",
+  "description": "Product-level extension providing newsletter-specific metadata. Attach as ext.newsletter on media products with channel 'email' to describe subscriber audience, send cadence, content categories, and upcoming sendouts.",
+  "valid_from": "3.0",
+  "docs_url": "https://docs.adcontextprotocol.org/docs/guides/newsletter-advertising",
+  "type": "object",
+  "properties": {
+    "subscriber_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of active subscribers"
+    },
+    "avg_open_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Average open rate as a decimal (e.g., 0.45 for 45%)"
+    },
+    "avg_click_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Average click-through rate as a decimal (e.g., 0.03 for 3%)"
+    },
+    "avg_click_to_open_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Average click-to-open rate (CTOR) as a decimal — unique clicks divided by unique opens. More reliable than avg_click_rate when open rates are inflated by Apple Mail Privacy Protection."
+    },
+    "send_frequency": {
+      "$ref": "/schemas/enums/send-frequency.json",
+      "description": "How often the newsletter is sent"
+    },
+    "send_days": {
+      "type": "array",
+      "items": {
+        "$ref": "/schemas/enums/day-of-week.json"
+      },
+      "description": "Days of the week the newsletter is typically sent"
+    },
+    "typical_send_time": {
+      "type": "string",
+      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+      "description": "Typical send time in HH:MM format (24-hour, publisher local time)"
+    },
+    "language": {
+      "type": "string",
+      "description": "Primary language of the newsletter content (BCP 47 language tag, e.g., 'en', 'de', 'fr')"
+    },
+    "country": {
+      "type": "string",
+      "description": "Primary country of the subscriber base (ISO 3166-1 alpha-2, e.g., 'US', 'GB', 'DE')"
+    },
+    "categories": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "IAB content taxonomy categories describing the newsletter's editorial focus"
+    },
+    "subscriber_consent_type": {
+      "$ref": "/schemas/enums/subscriber-consent-type.json",
+      "description": "How subscribers were acquired and consented to receive the newsletter"
+    },
+    "dark_mode_support": {
+      "type": "boolean",
+      "description": "Whether the newsletter template supports dark mode rendering"
+    },
+    "email_client_distribution": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "client": {
+            "$ref": "/schemas/enums/email-client.json"
+          },
+          "share": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Fraction of subscribers using this client (e.g., 0.35 for 35%)"
+          }
+        },
+        "required": ["client", "share"]
+      },
+      "description": "Distribution of subscribers across email clients"
+    },
+    "upcoming_sendouts": {
+      "type": "array",
+      "items": {
+        "$ref": "/schemas/extensions/newsletter_sendout.json"
+      },
+      "description": "Upcoming sendouts with available inventory"
+    },
+    "creative_deduplication": {
+      "$ref": "/schemas/enums/creative-deduplication.json",
+      "description": "Policy for whether the same creative may appear on multiple placements within a single sendout. When 'required', the buyer must assign distinct creatives to each placement. When 'none', the same creative can appear on all placements. Defaults to 'none' if omitted."
+    }
+  },
+  "additionalProperties": false
+}
