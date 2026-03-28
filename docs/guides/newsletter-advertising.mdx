@@ -924,6 +924,121 @@ The Signals Protocol returns matching audience segments with deployment status, 
 Audience-first discovery means newsletters don't need to be explicitly requested. A buyer agent that has never considered email advertising will naturally discover newsletters when they outperform other channels for the target audience. The existing Signals Protocol enables this without any Registry changes — newsletter seller agents simply need to be registered as signal deployment targets.
 </Tip>
 
+## Newsletter Bundles
+
+A network or aggregator may be contractually obligated to sell multiple newsletters together — buyers searching by audience type (e.g., "finance readers") must buy all newsletters in the bundle or none. AdCP's existing product model already supports this, but the `bundle` sub-object on `ext.newsletter` provides the per-newsletter breakdown that makes the bundle transparent to buyers.
+
+### When to use bundles
+
+Use a bundle product when:
+- A network has grouped multiple publisher newsletters under a single commercial offering
+- All newsletters must be booked together (no individual selection)
+- The buyer needs per-newsletter subscriber data for creative planning and budget decisions
+
+### How the bundle constraint works
+
+`property_targeting_allowed: false` (the default) enforces "all or nothing" — buyers cannot target individual properties in `publisher_properties`. When set on a multi-publisher product, the buyer automatically gets all newsletters; there's no protocol mechanism to select a subset.
+
+The aggregator agent is the MCP server serving the bundle product. How it has agreements with underlying publishers is a commercial concern, not a protocol concern.
+
+### Bundle product example
+
+The top-level `ext.newsletter` fields carry the aggregated view across all newsletters. `bundle.components` breaks it down per newsletter, with `total_unique_reach` capturing deduplicated subscribers (since many finance readers subscribe to multiple newsletters, the sum of individual counts overstates unique reach):
+
+```json
+{
+  "product_id": "finance_bundle_q2",
+  "name": "Finance Newsletter Bundle",
+  "publisher_properties": [
+    { "publisher_domain": "financeweekly.com", "property_type": "newsletter", "selection_type": "all" },
+    { "publisher_domain": "investornews.io", "property_type": "newsletter", "selection_type": "all" },
+    { "publisher_domain": "marketsbrief.com", "property_type": "newsletter", "selection_type": "all" }
+  ],
+  "property_targeting_allowed": false,
+  "ext": {
+    "newsletter": {
+      "subscriber_count": 135000,
+      "avg_open_rate": 0.42,
+      "categories": ["IAB13", "IAB13-1"],
+      "bundle": {
+        "total_unique_reach": 112000,
+        "audience_overlap_methodology": "email_hashing",
+        "components": [
+          {
+            "publisher_domain": "financeweekly.com",
+            "name": "Finance Weekly",
+            "subscriber_count": 45000,
+            "avg_open_rate": 0.44,
+            "avg_click_rate": 0.039,
+            "send_frequency": "weekly",
+            "send_days": ["wednesday"],
+            "upcoming_sendouts": [
+              { "sendout_id": "fw_2026_04_01", "scheduled_at": "2026-04-02T09:00:00Z", "expected_volume": 44500 }
+            ]
+          },
+          {
+            "publisher_domain": "investornews.io",
+            "name": "Investor News Daily",
+            "subscriber_count": 62000,
+            "avg_open_rate": 0.38,
+            "avg_click_rate": 0.031,
+            "send_frequency": "weekdays",
+            "upcoming_sendouts": [
+              { "sendout_id": "in_2026_04_01", "scheduled_at": "2026-04-01T07:30:00Z", "expected_volume": 61200 }
+            ]
+          },
+          {
+            "publisher_domain": "marketsbrief.com",
+            "name": "Markets Brief",
+            "subscriber_count": 28000,
+            "avg_open_rate": 0.51,
+            "avg_click_rate": 0.048,
+            "send_frequency": "biweekly",
+            "upcoming_sendouts": [
+              { "sendout_id": "mb_2026_04_07", "scheduled_at": "2026-04-07T08:00:00Z", "expected_volume": 27800 }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+Key points:
+- **`subscriber_count: 135000`** — the combined total across all three newsletters (45k + 62k + 28k)
+- **`total_unique_reach: 112000`** — the deduplicated count after removing subscribers who appear in more than one newsletter. A buyer planning for reach uses this number.
+- **`audience_overlap_methodology: "email_hashing"`** — the aggregator matched subscriber lists by hashed email to compute the overlap. Other valid values include `"panel_estimate"` and `"publisher_reported"`.
+- **`upcoming_sendouts` per component** — each newsletter carries its own sendout schedule, so the buyer knows "Finance Weekly sends Wednesday, Markets Brief sends every other Monday." Without this, a single `upcoming_sendouts` array on the product would be ambiguous across three different send schedules.
+
+### Booking a bundle
+
+The media buy is unchanged — one package targeting the bundle product ID. The aggregator routes delivery internally:
+
+```json
+{
+  "packages": [
+    {
+      "product_id": "finance_bundle_q2",
+      "pricing_option_id": "bundle_cpm",
+      "budget": 5600,
+      "impressions": 112000,
+      "pacing": "even"
+    }
+  ]
+}
+```
+
+### Creative assignments for bundles
+
+Buyers supply one creative set per placement. The aggregator delivers the creative to all newsletters in the bundle — the buyer does not need to assign creatives per newsletter. This is consistent with how `property_targeting_allowed: false` works: the bundle is treated as a single inventory unit from the buyer's perspective.
+
+If the bundle has `creative_deduplication: "required"` set, the policy applies within each individual newsletter sendout (a subscriber to Finance Weekly sees distinct creatives per placement), not across newsletters.
+
+### Audience-first discovery
+
+Bundle products surface naturally in Signals Protocol flows. When a buyer sends a brief for "finance audience," the aggregator's `get_products` returns the bundle product. `categories: ["IAB13"]` and `brief_relevance` handle the matching. The buyer agent evaluates `total_unique_reach` (not the raw subscriber sum) when comparing the bundle against single-newsletter options.
+
 ## Related Documentation
 
 - [Email Creative Channel](/docs/creative/channels/email) — Email rendering constraints, format specifications, and dark mode considerations

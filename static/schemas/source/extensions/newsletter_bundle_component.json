@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "/schemas/extensions/newsletter_bundle_component.json",
+  "title": "Newsletter Bundle Component",
+  "description": "Per-newsletter breakdown within a bundle product. Each component maps to a publisher_domain in the product's publisher_properties array and provides subscriber metadata and upcoming sendouts for that individual newsletter.",
+  "valid_from": "3.0",
+  "type": "object",
+  "properties": {
+    "publisher_domain": {
+      "type": "string",
+      "description": "The domain of the newsletter publisher. Must match a publisher_domain entry in the product's publisher_properties array."
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable name of the newsletter (e.g., 'Finance Weekly')"
+    },
+    "subscriber_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of active subscribers for this newsletter"
+    },
+    "avg_open_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Average open rate as a decimal (e.g., 0.45 for 45%)"
+    },
+    "avg_click_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Average click-through rate as a decimal (e.g., 0.03 for 3%)"
+    },
+    "avg_click_to_open_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Average click-to-open rate (CTOR) as a decimal — unique clicks divided by unique opens"
+    },
+    "send_frequency": {
+      "$ref": "/schemas/enums/send-frequency.json",
+      "description": "How often this newsletter is sent"
+    },
+    "send_days": {
+      "type": "array",
+      "items": {
+        "$ref": "/schemas/enums/day-of-week.json"
+      },
+      "description": "Days of the week this newsletter is typically sent"
+    },
+    "typical_send_time": {
+      "type": "string",
+      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+      "description": "Typical send time in HH:MM format (24-hour, publisher local time)"
+    },
+    "language": {
+      "type": "string",
+      "description": "Primary language of this newsletter (BCP 47, e.g., 'en', 'de')"
+    },
+    "categories": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "IAB content taxonomy categories for this newsletter's editorial focus"
+    },
+    "upcoming_sendouts": {
+      "type": "array",
+      "items": {
+        "$ref": "/schemas/extensions/newsletter_sendout.json"
+      },
+      "description": "Upcoming sendouts for this newsletter with available inventory"
+    }
+  },
+  "required": ["publisher_domain"],
+  "additionalProperties": false
+}

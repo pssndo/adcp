@@ -96,6 +96,31 @@
     "creative_deduplication": {
       "$ref": "/schemas/enums/creative-deduplication.json",
       "description": "Policy for whether the same creative may appear on multiple placements within a single sendout. When 'required', the buyer must assign distinct creatives to each placement. When 'none', the same creative can appear on all placements. Defaults to 'none' if omitted."
+    },
+    "bundle": {
+      "type": "object",
+      "description": "Present when this product covers multiple newsletters sold as a mandatory bundle. Provides per-newsletter breakdown and deduplicated reach. The top-level ext.newsletter fields (subscriber_count, avg_open_rate, etc.) reflect aggregated/combined values across all components.",
+      "properties": {
+        "total_unique_reach": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Deduplicated subscriber count across all bundle components. Will be less than the sum of component subscriber_counts when audiences overlap."
+        },
+        "audience_overlap_methodology": {
+          "type": "string",
+          "description": "How audience overlap was measured (e.g., 'email_hashing', 'panel_estimate', 'publisher_reported')"
+        },
+        "components": {
+          "type": "array",
+          "description": "Per-newsletter breakdown. Each entry maps to a publisher_domain in publisher_properties.",
+          "minItems": 2,
+          "items": {
+            "$ref": "/schemas/extensions/newsletter_bundle_component.json"
+          }
+        }
+      },
+      "required": ["components"],
+      "additionalProperties": false
     }
   },
   "additionalProperties": false
