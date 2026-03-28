@@ -16,7 +16,6 @@ export interface FormatInfo {
   name: string;
   dimensions?: string;
   aspect_ratio?: string;
-  type?: string;
   description?: string;
 }
 
@@ -99,8 +98,8 @@ export interface AgentWithStats extends Agent {
   health?: AgentHealth;
   stats?: AgentStats;
   capabilities?: AgentCapabilities;
+  compliance?: AgentCompliance;
   propertiesError?: string;
-  // Property summary (counts, not full list to avoid millions of records)
   publisher_domains?: string[];
   property_summary?: PropertySummary;
 }
@@ -495,9 +494,19 @@ export interface DataProviderConfig {
   last_validated?: string;
 }
 
+export interface BrandLogo {
+  url: string;
+  orientation?: 'square' | 'horizontal' | 'vertical' | 'stacked';
+  background?: 'dark-bg' | 'light-bg' | 'transparent-bg';
+  variant?: 'primary' | 'secondary' | 'icon' | 'wordmark' | 'full-lockup';
+  usage?: string;
+}
+
 export interface MemberBrandInfo {
   domain: string;
   logo_url?: string;
+  logo_url_dark?: string;
+  logos?: BrandLogo[];
   brand_color?: string;
   verified: boolean;
 }
@@ -766,7 +775,7 @@ export interface AddWorkingGroupMemberInput {
 
 // Committee Documents Types
 
-export type CommitteeDocumentType = 'google_doc' | 'google_sheet' | 'external_link' | 'pdf' | 'other';
+export type CommitteeDocumentType = 'google_doc' | 'google_sheet' | 'external_link' | 'pdf' | 'pptx' | 'other';
 export type DocumentIndexStatus = 'pending' | 'success' | 'access_denied' | 'error' | 'disabled';
 
 export interface CommitteeDocument {
@@ -774,7 +783,7 @@ export interface CommitteeDocument {
   working_group_id: string;
   title: string;
   description?: string;
-  document_url: string;
+  document_url?: string;
   document_type: CommitteeDocumentType;
   display_order: number;
   is_featured: boolean;
@@ -787,6 +796,9 @@ export interface CommitteeDocument {
   index_status: DocumentIndexStatus;
   index_error?: string;
   added_by_user_id?: string;
+  file_data?: Buffer;
+  file_name?: string;
+  file_mime_type?: string;
   created_at: Date;
   updated_at: Date;
 }
@@ -795,11 +807,14 @@ export interface CreateCommitteeDocumentInput {
   working_group_id: string;
   title: string;
   description?: string;
-  document_url: string;
+  document_url?: string;
   document_type?: CommitteeDocumentType;
   display_order?: number;
   is_featured?: boolean;
   added_by_user_id?: string;
+  file_data?: Buffer;
+  file_name?: string;
+  file_mime_type?: string;
 }
 
 export interface UpdateCommitteeDocumentInput {
@@ -839,6 +854,17 @@ export interface CommitteeDocumentActivity {
   content_hash_after?: string;
   change_summary?: string;
   detected_at: Date;
+}
+
+// Agent Compliance Types
+
+export interface AgentCompliance {
+  status: 'passing' | 'degraded' | 'failing' | 'unknown';
+  lifecycle_stage: 'development' | 'testing' | 'production' | 'deprecated';
+  tracks: Record<string, string>;
+  streak_days: number;
+  last_checked_at: string | null;
+  headline: string | null;
 }
 
 // Federated Discovery Types

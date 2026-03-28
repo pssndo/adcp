@@ -1,7 +1,8 @@
 ---
 title: "S1: Media buy mastery"
 sidebarTitle: "S1: Media buy"
-description: Specialist deep dive in media buy transactions — the full lifecycle, pricing, multi-agent orchestration, proposals, and advanced targeting.
+description: "AdCP specialist module S1: Media buy mastery. Full transaction lifecycle, pricing models, proposals, forecasting, and multi-agent orchestration with live sandbox agents."
+"og:title": "AdCP — S1: Media buy mastery"
 ---
 
 # S1: Media buy mastery
@@ -17,6 +18,8 @@ Passing earns the **AdCP specialist — Media buy** credential.
 ## What you'll demonstrate
 
 - Execute the full media buy lifecycle including proposals and forecasting
+- Manage order lifecycle: confirmation, pause/resume, cancellation, and terminal states
+- Use `get_media_buys` to check status, `valid_actions`, and creative approvals before acting
 - Handle pricing negotiation, budget allocation, and multi-agent orchestration
 - Use refinement and package requests for complex buying scenarios
 - Monitor and optimize campaign delivery using protocol tools
@@ -35,6 +38,9 @@ Passing earns the **AdCP specialist — Media buy** credential.
   </Card>
   <Card title="update_media_buy" icon="pen-to-square" href="/docs/media-buy/task-reference/update_media_buy">
     Campaign modification: budgets, targeting, scheduling, creative swaps.
+  </Card>
+  <Card title="get_media_buys" icon="list-check" href="/docs/media-buy/task-reference/get_media_buys">
+    Operational status: lifecycle state, creative approvals, valid actions, delivery snapshots.
   </Card>
   <Card title="get_media_buy_delivery" icon="chart-line" href="/docs/media-buy/task-reference/get_media_buy_delivery">
     Delivery reporting: impressions, spend, completion rates, performance.
@@ -71,7 +77,8 @@ During the module, Addie will guide you through hands-on exercises:
 1. **Product discovery and evaluation** — Query multiple sandbox agents, compare products, evaluate pricing
 2. **Proposal and forecasting** — Request proposals with budget points, analyze delivery forecasts
 3. **Campaign creation and optimization** — Create a media buy, monitor delivery, execute updates
-4. **Multi-agent orchestration** — Manage campaigns across multiple sellers simultaneously
+4. **Lifecycle management** — Check `valid_actions`, cancel a package, handle `NOT_CANCELLABLE`, use `revision` for concurrency
+5. **Multi-agent orchestration** — Manage campaigns across multiple sellers simultaneously
 
 ## Assessment
 
@@ -86,6 +93,6 @@ Passing threshold: 70%.
 
 ## Start this module
 
-<Card title="Start S1 with Addie" icon="play" href="https://agenticadvertising.org/addie">
+<Card title="Start S1 with Addie" icon="play" href="https://agenticadvertising.org/chat">
   "I'd like to start the media buy specialist module."
 </Card>

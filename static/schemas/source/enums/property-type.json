@@ -13,6 +13,7 @@
     "podcast",
     "radio",
     "streaming_audio",
+    "ai_assistant",
     "newsletter"
   ],
   "enumDescriptions": {
@@ -24,6 +25,7 @@
     "podcast": "Podcast feeds and episodes, identified by RSS feed URLs or podcast IDs",
     "radio": "Radio station properties, identified by call signs or station IDs",
     "streaming_audio": "Digital audio streaming properties, identified by platform-specific IDs",
+    "ai_assistant": "AI-powered conversational interfaces including chatbots, AI assistants, and conversational AI platforms, identified by platform-specific IDs",
     "newsletter": "Newsletter properties with advertising placements, identified by publisher domain and newsletter ID"
   }
 }

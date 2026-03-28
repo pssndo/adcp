@@ -1,9 +1,14 @@
 ---
 title: Creative Manifests
+description: "Creative manifests in AdCP are reusable presets that supply concrete asset values to satisfy format requirements for programmatic ad delivery."
+"og:title": "AdCP — Creative Manifests"
+"og:image": /images/walkthrough/diagram-format-manifest-render.png
 ---
 
 
 Creative manifests define a creative preset: a reusable configuration of brand content that can be instantiated in a specific creative format.
+
+<img src="/images/walkthrough/diagram-format-manifest-render.png" alt="Three columns showing how a format defines required slots, a manifest fills them with concrete values, and the result is a rendered creative" style={{ width: '100%', borderRadius: '12px', marginBottom: '1.5rem' }} />
 
 A manifest does not define structure, layout, or rendering behavior. Instead, it supplies concrete asset values that satisfy the requirements defined by a creative format. When combined with a format definition, a manifest produces a renderable creative instance.
 
@@ -281,7 +286,7 @@ Construct manifests directly by pairing format requirements with your assets:
 
 **2. AI-Generated (Optional)**
 
-Use `build_creative` to have a creative agent generate manifests from natural language briefs. See [Generative Creative](/docs/creative/generative-creative) for details.
+Use `build_creative` on any agent implementing the Creative Protocol to generate manifests from natural language briefs. See [Generative Creative](/docs/creative/generative-creative) for details.
 
 ### Validating Manifests
 
@@ -313,7 +318,7 @@ When a creative agent receives a manifest for validation:
    - Look up the `asset_id` in `format.assets`
    - If not found → **reject** with error "Unknown asset_id 'banner_imag' not defined in format"
    - If found → determine the expected `asset_type` from the format requirement
-   - Fetch the asset type schema (e.g., `/schemas/v2/core/assets/image-asset.json`)
+   - Fetch the asset type schema (e.g., `/schemas/v3/core/assets/image-asset.json`)
    - Validate the asset payload against that schema
    - Validate the asset meets any additional constraints in the format's `requirements` field
 4. **Check all required assets are present** (where `required: true` in format spec)
@@ -441,9 +446,9 @@ For carousel, slideshow, and multi-asset formats, see the [Carousel & Multi-Asse
 
 ## Schema Reference
 
-- [Creative Manifest Schema](https://adcontextprotocol.org/schemas/v2/core/creative-manifest.json)
-- [Preview Creative Request](https://adcontextprotocol.org/schemas/v2/creative/preview-creative-request.json)
-- [Preview Creative Response](https://adcontextprotocol.org/schemas/v2/creative/preview-creative-response.json)
+- [Creative Manifest Schema](https://adcontextprotocol.org/schemas/v3/core/creative-manifest.json)
+- [Preview Creative Request](https://adcontextprotocol.org/schemas/v3/creative/preview-creative-request.json)
+- [Preview Creative Response](https://adcontextprotocol.org/schemas/v3/creative/preview-creative-response.json)
 
 ## Related Documentation
 

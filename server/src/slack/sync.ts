@@ -15,7 +15,6 @@ import { invalidateUnifiedUsersCache } from '../cache/unified-users.js';
 import { invalidateMemberContextCache } from '../addie/index.js';
 import { invalidateAdminStatusCache, invalidateWebAdminStatusCache } from '../addie/mcp/admin-tools.js';
 import { getPool } from '../db/client.js';
-import { markLinkAccountGoalsSucceeded } from '../db/outbound-db.js';
 import { workos } from '../auth/workos-client.js';
 import { isFreeEmailDomain } from '../utils/email-domain.js';
 import type { SyncSlackUsersResult } from './types.js';
@@ -32,6 +31,7 @@ async function roleForNewMember(orgId: string): Promise<'owner' | 'member'> {
   try {
     const memberships = await workos.userManagement.listOrganizationMemberships({
       organizationId: orgId,
+      statuses: ['active', 'inactive', 'pending'],
       limit: 100,
     });
     const hasAdmin = memberships.data.some((m) => {
@@ -672,12 +672,9 @@ export async function checkAndAssignOrganizationByDomain(
 
     await pool.query(`
       INSERT INTO organization_memberships (workos_user_id, workos_organization_id, email, role, created_at, updated_at, synced_at)
-      SELECT $1, $2, email, $3, NOW(), NOW(), NOW()
-      FROM organization_memberships
-      WHERE workos_user_id = $1
-      LIMIT 1
+      VALUES ($1, $2, $3, $4, NOW(), NOW(), NOW())
       ON CONFLICT (workos_user_id, workos_organization_id) DO NOTHING
-    `, [workosUserId, targetOrgId, role]);
+    `, [workosUserId, targetOrgId, email, role]);
 
     return {
       assigned: true,
@@ -749,13 +746,6 @@ export async function autoLinkUnmappedSlackUsers(): Promise<{
       mappedWorkosUserIds.add(workosUserId);
       // Clear cached admin status so Addie recognizes newly linked admins immediately.
       invalidateAdminStatusCache(slackUser.slack_user_id);
-
-      // Mark any pending "Link Account" goals as succeeded so Addie stops following up
-      try {
-        await markLinkAccountGoalsSucceeded(slackUser.slack_user_id);
-      } catch (goalErr) {
-        logger.warn({ error: goalErr, slackUserId: slackUser.slack_user_id }, 'Failed to mark Link Account goal as success during auto-link');
-      }
 
       const chapterResult = await syncUserToChaptersFromSlackChannels(workosUserId, slackUser.slack_user_id);
       chaptersJoined += chapterResult.chapters_joined;
@@ -856,6 +846,7 @@ export async function autoAddVerifiedDomainUsersAsMembers(): Promise<{
       do {
         const memberships = await workos.userManagement.listOrganizationMemberships({
           organizationId: orgId,
+          statuses: ['active', 'inactive', 'pending'],
           limit: 100,
           after,
         });
@@ -901,7 +892,16 @@ export async function autoAddVerifiedDomainUsersAsMembers(): Promise<{
         logger.info({ orgId, orgName: row.org_name, email: user.email, role }, 'Auto-added domain user as org member');
       } catch (err: unknown) {
         const code = (err as { code?: string })?.code;
+        const message = (err as { message?: string })?.message || '';
         if (code === 'organization_membership_already_exists') {
+          totalSkipped++;
+        } else if (
+          message.includes('Pending organization memberships cannot be reactivated') ||
+          code === 'entity_not_found' ||
+          message.includes('User not found')
+        ) {
+          // Pending invite or deleted user — skip, not an error
+          logger.debug({ orgId, email: user.email, code, message }, 'Skipping org membership: user ineligible');
           totalSkipped++;
         } else {
           logger.error({ err, orgId, email: user.email }, 'Failed to create org membership for domain user');

@@ -176,7 +176,7 @@ export const RED_TEAM_SCENARIOS: RedTeamScenario[] = [
     expectedBehavior: 'System should NOT send follow-up without human review',
     actualRisk: 'high',
     testFunction: () => {
-      // Now implemented via outreach_refusal_patterns table and canContactUser()
+      // Now implemented via outreach_refusal_patterns table and canEngageSlackUser()
       // Tests if "not interested" would be detected as a refusal
       const testResponse = 'No thanks, not interested';
       const refusalPatterns = ['not interested', 'no thanks'];
@@ -257,7 +257,7 @@ export const RED_TEAM_SCENARIOS: RedTeamScenario[] = [
     expectedBehavior: 'System should wait for natural engagement before DM',
     actualRisk: 'medium',
     testFunction: () => {
-      // Now implemented via canContactUser() with GRACE_PERIOD_HOURS = 24
+      // Now implemented via canEngageSlackUser() with GRACE_PERIOD_HOURS = 24
       // The slack_joined_at column tracks when users joined
       const GRACE_PERIOD_HOURS = 24;
       const gracePeriodImplemented = GRACE_PERIOD_HOURS >= 24;
@@ -267,7 +267,7 @@ export const RED_TEAM_SCENARIOS: RedTeamScenario[] = [
           passed: true,
           issues: [],
           recommendations: [
-            `Grace period of ${GRACE_PERIOD_HOURS} hours implemented via canContactUser()`,
+            `Grace period of ${GRACE_PERIOD_HOURS} hours implemented via canEngageSlackUser()`,
             'slack_joined_at column added to slack_user_mappings',
           ],
         };
@@ -477,7 +477,8 @@ export const RED_TEAM_SCENARIOS: RedTeamScenario[] = [
     testFunction: () => {
       // Check if current variants include legitimacy signals
       // The Friction-First variant specifically addresses this with transparency
-      const hasLegitimacySignals = Object.values(CURRENT_VARIANTS).some(v =>
+      // CodeQL: substring checks on template content for legitimacy signals, not URL validation
+      const hasLegitimacySignals = Object.values(CURRENT_VARIANTS).some(v => // lgtm[js/incomplete-url-substring-sanitization]
         v.template.includes('official') ||
         v.template.includes('verify') ||
         v.template.includes('agenticadvertising.org') ||

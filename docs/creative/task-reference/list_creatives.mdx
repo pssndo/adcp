@@ -1,5 +1,7 @@
 ---
 title: list_creatives
+description: "list_creatives browses and filters creatives in an AdCP library by format, status, concept, and tags with cursor-based pagination."
+"og:title": "AdCP — list_creatives"
 ---
 
 
@@ -51,7 +53,6 @@ The `filters` object supports these optional, composable filters:
 | Filter | Type | Description |
 |--------|------|-------------|
 | `accounts` | array | Filter by owning accounts |
-| `format_types` | string[] | Filter by high-level format type (e.g., `"video"`, `"display"`) |
 | `format_ids` | format_id[] | Filter by structured format IDs |
 | `statuses` | string[] | Filter by approval status |
 | `tags` | string[] | Filter by tags (all must match) |
@@ -64,7 +65,6 @@ The `filters` object supports these optional, composable filters:
 | `updated_after` / `updated_before` | date-time | Filter by last-modified date range |
 | `assigned_to_packages` | string[] | Filter by package assignments * |
 | `media_buy_ids` | string[] | Filter by media buy assignments * |
-| `buyer_refs` | string[] | Filter by buyer reference IDs * |
 | `unassigned` | boolean | Filter for unassigned creatives * |
 | `has_served` | boolean | Filter for creatives that have served at least one impression * |
 
@@ -311,6 +311,6 @@ Find active creatives with delivery snapshots to identify stale or dormant asset
 
 - [`get_creative_delivery`](/docs/creative/task-reference/get_creative_delivery) - Detailed performance analytics with date ranges, variant breakdowns, and full delivery metrics
 - [`build_creative`](/docs/creative/task-reference/build_creative) - Build manifests from library creatives or generate from scratch
-- [`sync_creatives`](/docs/creative/task-reference/sync_creatives) - Upload and manage creative assets on a sales agent
+- [`sync_creatives`](/docs/creative/task-reference/sync_creatives) - Upload and manage creative assets on any agent hosting a creative library
 - [`list_creative_formats`](/docs/creative/task-reference/list_creative_formats) - Discover supported creative formats
 - [`preview_creative`](/docs/creative/task-reference/preview_creative) - Generate previews of creative manifests

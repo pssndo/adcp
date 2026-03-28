@@ -215,6 +215,17 @@ export const PropertyRegistryItemSchema = z
   })
   .openapi("PropertyRegistryItem");
 
+export const AgentComplianceSchema = z
+  .object({
+    status: z.enum(["passing", "degraded", "failing", "unknown"]),
+    lifecycle_stage: z.enum(["development", "testing", "production", "deprecated"]),
+    tracks: z.record(z.string(), z.string()).openapi({ example: { core: "pass", products: "fail" } }),
+    streak_days: z.number().int(),
+    last_checked_at: z.string().nullable(),
+    headline: z.string().nullable(),
+  })
+  .openapi("AgentCompliance");
+
 export const FederatedAgentWithDetailsSchema = z
   .object({
     url: z.string(),
@@ -244,6 +255,7 @@ export const FederatedAgentWithDetailsSchema = z
     health: AgentHealthSchema.optional(),
     stats: AgentStatsSchema.optional(),
     capabilities: AgentCapabilitiesSchema.optional(),
+    compliance: AgentComplianceSchema.optional(),
     publisher_domains: z.array(z.string()).optional(),
     property_summary: PropertySummarySchema.optional(),
   })
@@ -340,7 +352,7 @@ export const PolicySchema = z
     enforcement: z.enum(["must", "should", "may"]),
     jurisdictions: z.array(z.string()).openapi({ example: ["EU", "EEA"] }),
     region_aliases: z.record(z.string(), z.array(z.string())).openapi({ example: { EU: ["DE", "FR", "IT"] } }),
-    verticals: z.array(z.string()).openapi({ example: ["finance", "healthcare"] }),
+    policy_categories: z.array(z.string()).openapi({ example: ["age_restricted", "pharmaceutical_advertising"] }),
     channels: z.array(z.string()).nullable().openapi({ example: ["display", "video"] }),
     governance_domains: z.array(z.string()).openapi({ example: ["campaign", "creative"] }),
     effective_date: z.string().nullable().openapi({ example: "2025-05-25" }),

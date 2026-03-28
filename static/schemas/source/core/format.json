@@ -76,10 +76,6 @@
       "format": "uri",
       "description": "Optional URL to showcase page with examples and interactive demos of this format"
     },
-    "type": {
-      "$ref": "/schemas/enums/format-category.json",
-      "description": "DEPRECATED: High-level category for this format. Use the assets array to understand creative requirements instead - it provides precise information about what asset types are needed."
-    },
     "accepts_parameters": {
       "type": "array",
       "description": "List of parameters this format accepts in format_id. Template formats define which parameters (dimensions, duration, etc.) can be specified when instantiating the format. Empty or omitted means this is a concrete format with fixed parameters.",
@@ -104,37 +100,41 @@
           },
           "dimensions": {
             "type": "object",
-            "description": "Dimensions for this rendered piece (in pixels)",
+            "description": "Dimensions for this rendered piece. Defaults to pixels when unit is absent.",
             "properties": {
               "width": {
-                "type": "integer",
-                "minimum": 1,
-                "description": "Fixed width in pixels"
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Fixed width. Interpretation depends on unit (default: pixels)."
               },
               "height": {
-                "type": "integer",
-                "minimum": 1,
-                "description": "Fixed height in pixels"
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Fixed height. Interpretation depends on unit (default: pixels)."
               },
               "min_width": {
-                "type": "integer",
-                "minimum": 1,
-                "description": "Minimum width in pixels for responsive renders"
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Minimum width for responsive renders"
               },
               "min_height": {
-                "type": "integer",
-                "minimum": 1,
-                "description": "Minimum height in pixels for responsive renders"
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Minimum height for responsive renders"
               },
               "max_width": {
-                "type": "integer",
-                "minimum": 1,
-                "description": "Maximum width in pixels for responsive renders"
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Maximum width for responsive renders"
               },
               "max_height": {
-                "type": "integer",
-                "minimum": 1,
-                "description": "Maximum height in pixels for responsive renders"
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Maximum height for responsive renders"
+              },
+              "unit": {
+                "$ref": "/schemas/enums/dimension-unit.json",
+                "description": "Unit of measurement for width/height values. Defaults to 'px' when absent. Print formats use 'inches' or 'cm'."
               },
               "responsive": {
                 "type": "object",
@@ -154,8 +154,8 @@
               },
               "aspect_ratio": {
                 "type": "string",
-                "description": "Fixed aspect ratio constraint (e.g., '16:9', '4:3', '1:1')",
-                "pattern": "^\\d+:\\d+$"
+                "description": "Fixed aspect ratio constraint (e.g., '16:9', '4:3', '1:1', '1.91:1')",
+                "pattern": "^\\d+(\\.\\d+)?:\\d+(\\.\\d+)?$"
               }
             }
           }

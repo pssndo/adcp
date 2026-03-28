@@ -1,5 +1,7 @@
 ---
 title: Media Products
+description: "AdCP media products — the core sellable unit in the protocol. Covers product structure, pricing options, delivery types, format references, and catalog-driven inventory."
+"og:title": "AdCP — Media Products"
 ---
 
 
@@ -19,7 +21,10 @@ Products declare which pricing models they support. Buyers select a specific pri
 - `channels` (list[string], optional): Advertising channels this product is sold as (e.g., `["retail_media"]`, `["display", "olv"]`). Sellers SHOULD declare `channels` on products that span non-obvious channels, particularly retail media, CTV/OLV, and multi-channel bundles. Product channels SHOULD be a subset of the union of their properties' `supported_channels`. See [Media Channel Taxonomy](/docs/reference/media-channel-taxonomy).
 - `format_ids` (list[FormatID], required): Structured format ID references. See [Creative Formats](/docs/creative/formats).
 - `placements` (list[Placement], optional): Specific ad placements within this product. When provided, buyers can target individual placements when assigning creatives. See [Placements](#placements).
+- `shows` (list[CollectionSelector], optional): Shows covered by this product, grouped by publisher. Each entry has `publisher_domain` and `collection_ids` referencing shows in the publisher's `adagents.json`. See [Collections and installments](/docs/media-buy/product-discovery/collections-and-installments).
+- `episodes` (list[Episode], optional): Specific episodes available within this product. See [Collections and installments](/docs/media-buy/product-discovery/collections-and-installments).
 - `delivery_type` (string, required): Either `"guaranteed"` or `"non_guaranteed"`.
+- `exclusivity` (string, optional): Whether this product offers exclusive access. `"none"` (default when absent) — multiple advertisers can buy simultaneously. `"category"` — one advertiser per industry category. `"exclusive"` — sole sponsorship. Most relevant for guaranteed products tied to specific shows or placements.
 - `pricing_options` (list[PricingOption], required): Array of available pricing models for this product. See [Pricing Models](#pricing-models).
 - `delivery_measurement` (object, optional): Who measures ad delivery — the ad server and viewability vendor used to count impressions (e.g., "Google Ad Manager with IAS viewability"). When absent, buyers should apply their own measurement defaults. See [Delivery Measurement](#delivery-measurement).
 - `outcome_measurement` (OutcomeMeasurement, optional): Business outcome measurement included with the product — incremental sales lift, brand lift studies, etc. Common for retail media products.
@@ -27,6 +32,7 @@ Products declare which pricing models they support. Buyers select a specific pri
 - `is_custom` (bool, optional): `true` if the product was generated for a specific brief.
 - `expires_at` (datetime, optional): If `is_custom`, the time the product is no longer valid.
 - `property_targeting_allowed` (bool, optional, default: false): Whether buyers can filter this product to a subset of its `publisher_properties`. When `false` (default), the product is "all or nothing" - buyers must accept all properties or the product is excluded from `property_list` filtering results. See [Property Targeting](#property-targeting).
+- `collection_targeting_allowed` (bool, optional, default: false): Whether buyers can target a subset of this product's `shows`. When `false` (default), the product is a bundle — buyers get all listed shows. When `true`, buyers can select specific shows in the media buy.
 - `catalog_types` (list[string], optional): Catalog types this product supports for catalog-driven campaigns. A sponsored product listing declares `["product"]`, a job board declares `["job", "offering"]`. Buyers match synced catalogs to products via this field. See [Catalogs](/docs/creative/catalogs).
 - `catalog_match` (object, optional): When the buyer provides a `catalog` on `get_products`, indicates which catalog items are eligible for this product. Contains `matched_gtins` (cross-retailer GTIN matches), `matched_ids` (generic item ID matches), `matched_count`, and `submitted_count`.
 - `metric_optimization` (object, optional): Metric optimization capabilities for this product. Presence indicates the product supports `optimization_goals` with `kind: "metric"`. See [Metric optimization](#metric-optimization).
@@ -163,7 +169,7 @@ For products that include outcome measurement (common in retail media):
 Defines creative requirements and restrictions:
 ```json
 {
-  "$schema": "https://adcontextprotocol.org/schemas/v2/core/creative-policy.json",
+  "$schema": "https://adcontextprotocol.org/schemas/v3/core/creative-policy.json",
   "co_branding": "required",
   "landing_page": "retailer_site_only",
   "templates_available": true
@@ -182,7 +188,7 @@ Products can optionally declare specific ad placements within their inventory. W
 
 ```json
 {
-  "$schema": "https://adcontextprotocol.org/schemas/v2/core/placement.json",
+  "$schema": "https://adcontextprotocol.org/schemas/v3/core/placement.json",
   "placement_id": "homepage_banner",
   "name": "Homepage Banner",
   "description": "Above-the-fold banner on the homepage",
@@ -244,6 +250,90 @@ When creating a media buy, buyers can assign different creatives to different pl
 ```
 
 See [Creative Assignment and Placement Targeting](/docs/media-buy/media-buys/index.mdx#creative-assignment-and-placement-targeting) for more details.
+
+### Collections and installments
+
+Shows are a third product dimension alongside formats and placements. While placements describe *where* an ad appears and formats describe *what* the ad looks like, shows describe the *content context* — the programming a viewer is watching. Products can declare `shows` and `episodes` so buyers can target specific shows or episodes when purchasing inventory.
+
+See [Collections and installments](/docs/media-buy/product-discovery/collections-and-installments) for the full model, examples, and targeting details.
+
+### Exclusivity
+
+The `exclusivity` field indicates whether a product offers exclusive access to its inventory. Defaults to `"none"` when absent.
+
+| Value | Meaning |
+|---|---|
+| `none` | Multiple advertisers can buy this product simultaneously |
+| `category` | One advertiser per industry category (e.g., one auto brand per collection sponsorship) |
+| `exclusive` | Sole sponsorship — only one advertiser can buy this product |
+
+Exclusivity is most relevant for guaranteed products tied to specific shows or placements, where advertisers want brand separation or sole ownership of a content association.
+
+#### When to use each level
+
+- **`none`**: Programmatic inventory, run-of-network, open auction products. Multiple advertisers sharing the same inventory is expected.
+- **`category`**: Podcast or CTV sponsorships where competitive separation matters. One auto brand per collection, one fintech brand per installment — but multiple non-competing advertisers can buy simultaneously.
+- **`exclusive`**: Sole sponsorship of a single collection or event. The advertiser is the only brand associated with the content.
+
+Publishers SHOULD include `exclusivity` on guaranteed products with `shows`. The implicit default of `"none"` is ambiguous for collection-level inventory — buyers cannot tell whether the publisher intends shared inventory or simply omitted the field.
+
+#### Content sponsorship pattern
+
+A product combining `delivery_type: "guaranteed"`, `exclusivity: "exclusive"`, and `shows` represents a content sponsorship — the advertiser becomes the sole sponsor of specific content. This is the standard pattern for podcast title sponsorships, CTV collection sponsorships, and event-based takeovers.
+
+```json
+{
+  "product_id": "signal_noise_sponsor",
+  "name": "Signal & Noise — Exclusive Sponsorship",
+  "description": "Sole sponsorship of Signal & Noise, a weekly technology podcast. Includes pre-roll and mid-roll placements across all episodes.",
+  "publisher_properties": [
+    { "publisher_domain": "crestnetwork.example", "property_ids": ["crest_podcasts"] }
+  ],
+  "format_ids": [
+    { "agent_url": "https://ads.crestnetwork.example", "id": "audio_pre_roll_30s" },
+    { "agent_url": "https://ads.crestnetwork.example", "id": "audio_mid_roll_60s" }
+  ],
+  "collections": [{ "publisher_domain": "crestnetwork.example", "collection_ids": ["signal_noise"] }],
+  "delivery_type": "guaranteed",
+  "exclusivity": "exclusive",
+  "pricing_options": [
+    {
+      "pricing_option_id": "flat_monthly",
+      "pricing_model": "flat_rate",
+      "fixed_price": 25000,
+      "currency": "USD"
+    }
+  ]
+}
+```
+
+Category exclusivity works for multi-collection bundles where the publisher separates competing brands across a network but still sells to multiple non-competing advertisers:
+
+```json
+{
+  "product_id": "crest_business_bundle",
+  "name": "Crest Business Podcast Bundle — Category Sponsorship",
+  "description": "Sponsorship across three business podcasts. One advertiser per industry category across all shows.",
+  "publisher_properties": [
+    { "publisher_domain": "crestnetwork.example", "property_ids": ["crest_podcasts"] }
+  ],
+  "format_ids": [
+    { "agent_url": "https://ads.crestnetwork.example", "id": "audio_pre_roll_30s" },
+    { "agent_url": "https://ads.crestnetwork.example", "id": "audio_mid_roll_60s" }
+  ],
+  "collections": [{ "publisher_domain": "crestnetwork.example", "collection_ids": ["signal_noise", "market_beat", "founder_stories"] }],
+  "delivery_type": "guaranteed",
+  "exclusivity": "category",
+  "pricing_options": [
+    {
+      "pricing_option_id": "flat_quarterly",
+      "pricing_model": "flat_rate",
+      "fixed_price": 60000,
+      "currency": "USD"
+    }
+  ]
+}
+```
 
 ### Property Targeting
 
@@ -673,7 +763,6 @@ To execute a proposal, provide the `proposal_id` and `total_budget` in `create_m
 
 ```json
 {
-  "buyer_ref": "swiss_q1_campaign",
   "proposal_id": "swiss_balanced_v1",
   "total_budget": {
     "amount": 50000,
@@ -686,8 +775,8 @@ To execute a proposal, provide the `proposal_id` and `total_budget` in `create_m
 ```
 
 The publisher converts the proposal's allocation percentages into packages:
-- `ch_desktop_de`: 20% × $50,000 = $10,000
-- `ch_desktop_fr`: 30% × $50,000 = $15,000
+- `ch_desktop_de`: 20% × \$50,000 = \$10,000
+- `ch_desktop_fr`: 30% × \$50,000 = \$15,000
 - etc.
 
 This approach simplifies complex multi-line-item campaigns to a single proposal execution.
@@ -778,7 +867,7 @@ Multiple forecast points at ascending budget levels show how metrics scale with 
 }
 ```
 
-The curve reveals diminishing returns — doubling budget from $50K to $100K increases reach by ~56%, not 2x. Buyers can use this to negotiate or reallocate budget across publishers.
+The curve reveals diminishing returns — doubling budget from \$50K to \$100K increases reach by ~56%, not 2x. Buyers can use this to negotiate or reallocate budget across publishers.
 
 #### CTV with GRP Demographics
 
@@ -1026,7 +1115,7 @@ Broadcast and audio publishers can return spot-plan proposals with `daypart_targ
 }
 ```
 
-The `forecast_range_unit: "weekly"` on each forecast tells the buyer that all metrics are per-week values — frequency of 3.2 means 3.2 exposures per week, not 3.2 over the entire campaign. Budget ($75K) is total campaign spend.
+The `forecast_range_unit: "weekly"` on each forecast tells the buyer that all metrics are per-week values — frequency of 3.2 means 3.2 exposures per week, not 3.2 over the entire campaign. Budget (\$75K) is total campaign spend.
 
 The `daypart_targets` on each allocation specify the publisher's recommended time windows. These are the same structure used in `targeting` for hard daypart constraints — here the publisher is prescribing the spot plan rather than the buyer constraining it.
 

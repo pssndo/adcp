@@ -4,11 +4,11 @@
   "title": "AdCP Schema Registry",
   "version": "1.0.0",
   "description": "Registry of all AdCP JSON schemas for validation and discovery",
-  "adcp_version": "3.0.0-rc.1",
+  "adcp_version": "3.0.0-rc.2",
   "versioning": {
     "note": "AdCP uses path-based versioning. The schema URL path (/schemas/) indicates the version. Individual request/response schemas do NOT include adcp_version fields. Compatibility follows semantic versioning rules."
   },
-  "lastUpdated": "2026-02-27",
+  "lastUpdated": "2026-03-13",
   "baseUrl": "/schemas/latest",
   "schemas": {
     "core": {
@@ -74,6 +74,18 @@
           "$ref": "/schemas/core/creative-policy.json",
           "description": "Creative requirements and restrictions for a product"
         },
+        "deadline-policy": {
+          "$ref": "/schemas/core/deadline-policy.json",
+          "description": "Default deadline rules for installments based on lead times from scheduled_at"
+        },
+        "installment-deadlines": {
+          "$ref": "/schemas/core/installment-deadlines.json",
+          "description": "Booking, cancellation, and material submission deadlines for an installment"
+        },
+        "material-deadline": {
+          "$ref": "/schemas/core/material-deadline.json",
+          "description": "A deadline for creative material submission at a specific stage"
+        },
         "response": {
           "$ref": "/schemas/core/response.json",
           "description": "Standard response structure (MCP)"
@@ -81,6 +93,14 @@
         "error": {
           "$ref": "/schemas/core/error.json",
           "description": "Standard error structure"
+        },
+        "generation-credential": {
+          "$ref": "/schemas/core/generation-credential.json",
+          "description": "Scoped credential for generating rights-cleared content via LLM providers"
+        },
+        "rights-constraint": {
+          "$ref": "/schemas/core/rights-constraint.json",
+          "description": "Rights metadata attached to creative manifests for tracking validity and constraints"
         },
         "pagination-request": {
           "$ref": "/schemas/core/pagination-request.json",
@@ -137,6 +157,10 @@
         "proposal": {
           "$ref": "/schemas/core/proposal.json",
           "description": "A proposed media plan with budget allocations across products - actionable via create_media_buy"
+        },
+        "insertion-order": {
+          "$ref": "/schemas/core/insertion-order.json",
+          "description": "A formal insertion order attached to a committed proposal for agreement signing"
         },
         "product-allocation": {
           "$ref": "/schemas/core/product-allocation.json",
@@ -416,6 +440,10 @@
           "$ref": "/schemas/enums/delivery-type.json",
           "description": "Type of inventory delivery"
         },
+        "proposal-status": {
+          "$ref": "/schemas/enums/proposal-status.json",
+          "description": "Lifecycle status of a proposal (draft or committed)"
+        },
         "media-buy-status": {
           "$ref": "/schemas/enums/media-buy-status.json",
           "description": "Status of a media buy"
@@ -471,10 +499,6 @@
         "disclosure-persistence": {
           "$ref": "/schemas/enums/disclosure-persistence.json",
           "description": "How long a disclosure must persist during content playback or display"
-        },
-        "format-category": {
-          "$ref": "/schemas/enums/format-category.json",
-          "description": "High-level categories for creative formats (audio, video, display, native, dooh, rich_media, universal)"
         },
         "vast-version": {
           "$ref": "/schemas/enums/vast-version.json",
@@ -550,7 +574,15 @@
         },
         "adcp-domain": {
           "$ref": "/schemas/enums/adcp-domain.json",
-          "description": "AdCP protocol domains (media-buy, signals, governance, creative)"
+          "description": "AdCP protocol domains (media-buy, signals, governance, creative, brand)"
+        },
+        "right-use": {
+          "$ref": "/schemas/enums/right-use.json",
+          "description": "Types of rights usage (likeness, voice, endorsement, sync, etc.)"
+        },
+        "right-type": {
+          "$ref": "/schemas/enums/right-type.json",
+          "description": "Categories of licensable rights (talent, music, brand_ip, stock_media)"
         },
         "http-method": {
           "$ref": "/schemas/enums/http-method.json",
@@ -739,6 +771,10 @@
         "delegation-authority": {
           "$ref": "/schemas/enums/delegation-authority.json",
           "description": "Authority level for a delegated agent on a campaign plan (full, execute_only, propose_only)"
+        },
+        "exclusivity": {
+          "$ref": "/schemas/enums/exclusivity.json",
+          "description": "Whether a product offers exclusive access to its inventory (none, category, exclusive)"
         }
       }
     },
@@ -1362,6 +1398,86 @@
       "file_location": "/.well-known/brand.json",
       "purpose": "Declares brand identity and agent for a domain, enabling brand discovery and verification"
     },
+    "trusted-match": {
+      "description": "Trusted Match Protocol (TMP) — real-time execution layer for activating pre-negotiated packages across any surface",
+      "supporting-schemas": {
+        "available-package": {
+          "$ref": "/schemas/tmp/available-package.json",
+          "description": "A package available for contextual matching on a given impression opportunity"
+        },
+        "offer": {
+          "$ref": "/schemas/tmp/offer.json",
+          "description": "Buyer's response to a context match — ranges from simple activation (package_id only) to rich offers with brand, price, summary, and creative manifest"
+        },
+        "offer-price": {
+          "$ref": "/schemas/tmp/offer-price.json",
+          "description": "Lightweight price for variable-priced offers"
+        },
+        "package-eligibility": {
+          "$ref": "/schemas/tmp/package-eligibility.json",
+          "description": "Identity-based eligibility determination for a package — boolean eligible plus optional intent score"
+        },
+        "error": {
+          "$ref": "/schemas/tmp/error.json",
+          "description": "Error response from a TMP provider or router when a request cannot be processed"
+        }
+      },
+      "operations": {
+        "context-match": {
+          "request": {
+            "$ref": "/schemas/tmp/context-match-request.json",
+            "description": "Evaluate available packages against content context. Contains no user identity."
+          },
+          "response": {
+            "$ref": "/schemas/tmp/context-match-response.json",
+            "description": "Offers for matched packages with optional brand, price, summary, creative manifest, and targeting signals"
+          }
+        },
+        "identity-match": {
+          "request": {
+            "$ref": "/schemas/tmp/identity-match-request.json",
+            "description": "Evaluate user eligibility for packages using an opaque identity token. Contains no page context."
+          },
+          "response": {
+            "$ref": "/schemas/tmp/identity-match-response.json",
+            "description": "Per-package eligibility — boolean eligible plus optional intent score"
+          }
+        }
+      }
+    },
+    "brand-protocol": {
+      "description": "Brand protocol schemas for identity retrieval, rights discovery, and rights acquisition",
+      "schemas": {
+        "get-brand-identity-request": {
+          "$ref": "/schemas/brand/get-brand-identity-request.json",
+          "description": "Request brand identity data from a brand agent"
+        },
+        "get-brand-identity-response": {
+          "$ref": "/schemas/brand/get-brand-identity-response.json",
+          "description": "Brand identity data response"
+        },
+        "get-rights-request": {
+          "$ref": "/schemas/brand/get-rights-request.json",
+          "description": "Search for licensable rights with pricing"
+        },
+        "get-rights-response": {
+          "$ref": "/schemas/brand/get-rights-response.json",
+          "description": "Matching rights with pricing options"
+        },
+        "acquire-rights-request": {
+          "$ref": "/schemas/brand/acquire-rights-request.json",
+          "description": "Acquire rights with contractual clearance"
+        },
+        "acquire-rights-response": {
+          "$ref": "/schemas/brand/acquire-rights-response.json",
+          "description": "Rights acquisition result with terms and generation credentials"
+        },
+        "rights-pricing-option": {
+          "$ref": "/schemas/brand/rights-pricing-option.json",
+          "description": "Pricing option for licensable rights"
+        }
+      }
+    },
     "extensions": {
       "description": "Typed extension schemas for vendor-specific or domain-specific data. Extensions define the structure of data within the ext.{namespace} field. Agents declare which extensions they support in their agent card.",
       "registry": {
@@ -1373,6 +1489,21 @@
         "description": "Schema that all extension files must follow. Defines valid_from, valid_until, and extension data structure."
       },
       "schemas": {}
+    },
+    "compliance": {
+      "description": "Compliance testing tool schemas. The test controller is an optional sandbox-only tool that lets comply walk full lifecycle state machines by triggering seller-side transitions deterministically.",
+      "tasks": {
+        "comply-test-controller": {
+          "request": {
+            "$ref": "/schemas/compliance/comply-test-controller-request.json",
+            "description": "Request payload for the comply_test_controller tool — scenario selection and scenario-specific params"
+          },
+          "response": {
+            "$ref": "/schemas/compliance/comply-test-controller-response.json",
+            "description": "Response payload — state transition results, simulation results, scenario list, or structured errors"
+          }
+        }
+      }
     }
   },
   "usage": {

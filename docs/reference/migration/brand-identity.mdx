@@ -1,6 +1,7 @@
 ---
 title: "Migrating brand identity"
-description: Step-by-step guide to migrating from inline brand_manifest objects to BrandRef references resolved via brand.json
+description: "Migrate AdCP brand identity from beta.3 to rc.1. Replaces inline brand_manifest objects with BrandRef references resolved via brand.json or the community registry."
+"og:title": "AdCP — Migrating brand identity"
 testable: true
 ---
 
@@ -57,7 +58,7 @@ For single-brand domains:
     "name": "Spark",
     "domain": "spark.nova-brands.com",
     "logo_url": "https://spark.nova-brands.com/logo.png",
-    "industry": "consumer_electronics"
+    "industries": ["consumer_electronics"]
   },
   "account": { "account_id": "acct_nova" },
   "start_time": "2025-04-01T00:00:00Z",
@@ -73,7 +74,6 @@ For single-brand domains:
     "brand_id": "spark"
   },
   "account": { "account_id": "acct_nova" },
-  "buyer_ref": "campaign_spring_2025",
   "start_time": "2025-04-01T00:00:00Z",
   "end_time": "2025-04-30T23:59:59Z"
 }

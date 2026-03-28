@@ -1,5 +1,7 @@
 ---
 title: get_adcp_capabilities
+description: "get_adcp_capabilities is the first call a buyer makes to discover an AdCP seller's supported protocols, auth model, version, and feature capabilities. Request and response schema reference."
+"og:title": "AdCP — get_adcp_capabilities"
 testable: false
 ---
 
@@ -65,7 +67,7 @@ Array of domain protocols this seller supports:
 
 ### account
 
-Account and authentication capabilities. Optional — sellers that don't manage accounts through AdCP may omit it. When present, buyers should read it before calling `sync_accounts` or any authenticated task.
+Account and authentication capabilities. All sellers should declare this section — buyers read it before calling `sync_accounts`, `list_accounts`, or any authenticated task. Even simple publishers need account management to handle billing relationships and sandbox testing.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -74,7 +76,7 @@ Account and authentication capabilities. Optional — sellers that don't manage 
 | `authorization_endpoint` | string | OAuth URL for operator authentication. Present when the seller supports OAuth for operator authentication. Relevant when `require_operator_auth: true`; if absent, operators obtain credentials out-of-band (seller portal, API key). |
 | `required_for_products` | boolean | Default: `false`. When `true`, the buyer must establish an account before calling `get_products`. When `false`, the buyer can browse products without an account — useful for price comparison and discovery before committing to a seller. |
 | `account_financials` | boolean | Default: `false`. When `true`, the seller supports [`get_account_financials`](/docs/accounts/tasks/get_account_financials) for querying spend, credit, and invoice status. Only applicable to operator-billed accounts. |
-| `sandbox` | boolean | Default: `false`. When `true`, the seller supports sandbox accounts for testing. For sandbox, the path follows the account model: explicit accounts discover pre-existing test accounts via `list_accounts`; implicit accounts declare sandbox via `sync_accounts` with `sandbox: true` — no real platform calls or spend. See [Sandbox mode](/docs/media-buy/advanced-topics/sandbox). |
+| `sandbox` | boolean | Default: `false`. Strongly recommended for production sales agents. When `true`, the seller supports sandbox accounts for testing. For sandbox, the path follows the account model: explicit accounts discover pre-existing test accounts via `list_accounts`; implicit accounts declare sandbox via `sync_accounts` with `sandbox: true` — no real platform calls or spend. See [Sandbox mode](/docs/media-buy/advanced-topics/sandbox). |
 
 #### Auth models
 
@@ -99,6 +101,7 @@ Optional media-buy features. **If declared true, seller MUST honor requests usin
 | `inline_creative_management` | Accepts creatives inline in `create_media_buy` requests |
 | `property_list_filtering` | Honors `property_list` parameter in `get_products` |
 | `content_standards` | Full support for content standards configuration |
+| `audience_targeting` | Support for audience targeting and ingestion, including `sync_audiences` |
 
 #### execution
 
@@ -172,6 +175,18 @@ Sellers that support a geographic targeting level SHOULD support both inclusion 
 | `au_postcode` | Australian postcode (e.g., `2000`) |
 | `ch_plz` | Swiss Postleitzahl (e.g., `8000`) |
 | `at_plz` | Austrian Postleitzahl (e.g., `1010`) |
+
+#### audience_targeting
+
+Audience targeting capabilities. Only present when `features.audience_targeting` is `true`. Describes what identifier types the seller accepts for audience matching, size constraints, and expected matching latency.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `supported_identifier_types` | string[] | **Required** | PII-derived identifier types accepted for audience matching. Buyers should only send identifiers the seller supports. Values: `hashed_email`, `hashed_phone`. |
+| `minimum_audience_size` | integer | **Required** | Minimum matched audience size required for targeting. Audiences below this threshold will have `status: too_small`. Varies by platform (100–1000 is typical). |
+| `supports_platform_customer_id` | boolean | | When `true`, the seller accepts the buyer's CRM/loyalty ID as a matchable identifier. Only applicable when the seller operates a closed ecosystem with a shared ID namespace (e.g., a retailer matching against their loyalty program). Buyers can include `platform_customer_id` values in `AudienceMember.identifiers`. Reporting on matched IDs typically requires a clean room or the seller's own reporting surface. |
+| `supported_uid_types` | string[] | | Universal ID types accepted for audience matching (MAIDs, RampID, UID2, etc.). MAID support varies significantly by platform — check this field before sending `uids` with `type: maid`. |
+| `matching_latency_hours` | object | | Expected matching latency range in hours after upload. Use to calibrate polling cadence and set appropriate expectations before configuring `push_notification_config`. Shape: `{ min: integer, max: integer }`. |
 
 #### conversion_tracking
 
@@ -323,7 +338,24 @@ if (result.supported_protocols.includes('media_buy')) {
 }
 ```
 
-### Filter Sellers by Capability
+### Check multi-protocol support
+
+```javascript
+const caps = await client.getAdcpCapabilities({});
+
+const sellsMedia = caps.supported_protocols.includes('media_buy');
+const managesCreatives = caps.supported_protocols.includes('creative');
+
+if (sellsMedia && managesCreatives) {
+  // Single agent handles both protocols — no need to discover a separate service
+  const formats = await client.listCreativeFormats({});
+  const delivery = await client.getCreativeDelivery({
+    media_buy_ids: ['mb_12345']
+  });
+}
+```
+
+### Filter sellers by capability
 
 ```javascript
 // Find sellers that support specific requirements
@@ -412,10 +444,8 @@ const products = await client.getProducts({
 // Then, create media buy with fine-grained targeting
 // (if seller supports postal areas, we can target specific ZIP codes)
 const buy = await client.createMediaBuy({
-  buyer_ref: 'my-campaign-001',
   brand: { domain: 'mybrand.com' },
   packages: [{
-    buyer_ref: 'package-001',
     product_id: products.products[0].product_id,
     pricing_option_id: products.products[0].pricing_options[0].id,
     budget: 10000,
@@ -467,10 +497,8 @@ const radioProducts = await client.getProducts({
 // For local inventory, targeting_overlay is optional -
 // the product's coverage IS the geography
 const buy = await client.createMediaBuy({
-  buyer_ref: 'radio-campaign-001',
   brand: { domain: 'mybrand.com' },
   packages: [{
-    buyer_ref: 'package-001',
     product_id: radioProducts.products[0].product_id,
     pricing_option_id: radioProducts.products[0].pricing_options[0].id,
     budget: 5000
@@ -498,7 +526,8 @@ const buy = await client.createMediaBuy({
     "features": {
       "inline_creative_management": true,
       "property_list_filtering": true,
-      "content_standards": false
+      "content_standards": false,
+      "audience_targeting": true
     },
     "execution": {
       "axe_integrations": ["https://agentic.scope3.com"],
@@ -536,6 +565,13 @@ const buy = await client.createMediaBuy({
         }
       }
     },
+    "audience_targeting": {
+      "supported_identifier_types": ["hashed_email", "hashed_phone"],
+      "supports_platform_customer_id": false,
+      "supported_uid_types": ["uid2", "rampid"],
+      "minimum_audience_size": 500,
+      "matching_latency_hours": { "min": 1, "max": 24 }
+    },
     "conversion_tracking": {
       "multi_source_event_dedup": false,
       "supported_event_types": ["purchase", "lead", "add_to_cart", "view_content"],
@@ -557,15 +593,56 @@ const buy = await client.createMediaBuy({
 
 This tells buyers:
 - **AdCP versions**: Version 1
-- **Protocols**: Media-buy only (signals not supported)
+- **Protocols**: Media buy only
 - **Auth model**: Agent-trusted (`require_operator_auth: false`) — authenticate once, declare brands via `sync_accounts`
 - **Billing**: Operator or agent billing; default is operator
 - **Country targeting**: Available (ISO 3166-1 alpha-2: `US`, `GB`, etc.)
 - **Region targeting**: Available (ISO 3166-2: `US-NY`, `GB-SCT`, etc.)
 - **Metro targeting**: Nielsen DMA only (US market)
 - **Postal targeting**: US ZIP, UK outward codes, Canadian FSA
+- **Audience targeting**: Accepts hashed email, hashed phone, UID2, and RampID; minimum matched audience size of 500; matching latency 1–24 hours
 - **Conversion tracking**: Accepts purchase, lead, add_to_cart, view_content events from website/app; no multi-source dedup
 - **Extensions**: Scope3 sustainability data in `ext.scope3`
+
+### Multi-protocol agent
+
+An agent can implement multiple protocols from a single endpoint. This is common for sellers that manage both media buying and creative generation — the buyer calls all tasks on the same URL.
+
+```json
+{
+  "$schema": "/schemas/protocol/get-adcp-capabilities-response.json",
+  "adcp": {
+    "major_versions": [3]
+  },
+  "supported_protocols": ["media_buy", "creative"],
+  "account": {
+    "require_operator_auth": false,
+    "supported_billing": ["operator"]
+  },
+  "media_buy": {
+    "features": {
+      "inline_creative_management": true
+    },
+    "portfolio": {
+      "publisher_domains": ["news.example.com"],
+      "primary_channels": ["display", "olv"]
+    }
+  },
+  "creative": {
+    "has_creative_library": true,
+    "supports_generation": true,
+    "supports_transformation": false,
+    "supports_compliance": false
+  }
+}
+```
+
+This agent supports:
+- **Media Buy Protocol**: Product discovery, media buying, delivery reporting
+- **Creative Protocol**: Creative library management, AI-powered creative generation, variant-level delivery analytics via `get_creative_delivery`
+- **Shared account**: A single account established via `sync_accounts` applies to both protocols
+
+When `supported_protocols` includes `"creative"`, the buyer can call Creative Protocol tasks (`list_creative_formats`, `sync_creatives`, `get_creative_delivery`, etc.) on this agent. See [Creative capabilities on sales agents](/docs/creative/sales-agent-creative-capabilities).
 
 ### Geo Standards Reference
 

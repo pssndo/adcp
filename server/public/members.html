@@ -4,34 +4,20 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Partner Directory - AgenticAdvertising.org</title>
-  <link rel="icon" href="/AAo.svg" type="image/svg+xml">
+  <link rel="icon" href="/addie-icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/design-system.css">
+  <link rel="stylesheet" href="/layout.css">
   <style>
     /* =============================================================================
        Members Directory - Uses design system tokens
        ============================================================================= */
 
     body {
-      background: var(--color-bg-page);
-      padding-top: var(--nav-height);
+      background: #fff;
+      /* padding-top handled by hero */
     }
 
-    .header {
-      background: linear-gradient(135deg, var(--color-brand) 0%, var(--color-brand-hover) 100%);
-      color: white;
-      padding: var(--space-12) 0;
-      text-align: center;
-    }
-
-    .header h1 {
-      font-size: var(--text-4xl);
-      margin-bottom: var(--space-2);
-    }
-
-    .header .subtitle {
-      font-size: var(--text-lg);
-      color: rgba(255, 255, 255, 0.9);
-    }
+    /* Header uses .hero from design-system.css */
 
     .container {
       max-width: var(--container-xl);
@@ -1103,21 +1089,24 @@
   <!-- Navigation -->
   <div id="adcp-nav"></div>
   <script src="/nav.js"></script>
+  <script src="/registry-nav.js"></script>
   <script src="/member-card.js"></script>
 
   <!-- List View -->
   <div id="list-view">
-    <div class="header">
-      <h1>Partner directory</h1>
-      <p class="subtitle">Find companies who can help you implement AdCP</p>
-    </div>
+    <section class="hero hero--clean">
+      <div class="hero-container">
+        <h1>Partner directory</h1>
+        <p class="hero-subtitle">Find companies who can help you implement AdCP</p>
+      </div>
+    </section>
 
     <div class="container">
       <!-- Join CTA Card -->
       <div class="join-cta">
         <h3>Looking for implementation help?</h3>
         <p>Browse partners below, or ask Addie to help you find the right match and make an introduction.</p>
-        <a href="/chat?prompt=Help%20me%20find%20a%20partner%20who%20can%20help%20me%20implement%20AdCP" class="join-cta-btn">Ask Addie to help</a>
+        <a href="/chat?prompt=Help%20me%20find%20a%20partner%20who%20can%20help%20me%20implement%20AdCP" class="join-cta-btn" style="display: inline-flex; align-items: center; gap: 6px;"><img src="/addie-avatar.svg" alt="" style="width: 20px; height: auto;"> Ask Addie to help</a>
       </div>
 
       <div class="search-section">
@@ -1153,7 +1142,7 @@
       <div class="join-cta" id="general-inquiry" style="display: none;">
         <h3>Not finding the right fit?</h3>
         <p>Tell Addie what you're looking for and get matched with the right partner.</p>
-        <a href="/chat?prompt=I%27m%20looking%20for%20a%20partner%20who%20can%20help%20me%20with%20AdCP%20implementation" class="join-cta-btn">Ask Addie</a>
+        <a href="/chat?prompt=I%27m%20looking%20for%20a%20partner%20who%20can%20help%20me%20with%20AdCP%20implementation" class="join-cta-btn" style="display: inline-flex; align-items: center; gap: 6px;"><img src="/addie-avatar.svg" alt="" style="width: 20px; height: auto;"> Ask Addie</a>
       </div>
     </div>
   </div>
@@ -1297,7 +1286,6 @@
             marketSelect.value = marketParam;
           }
         }
-
         loadMembers();
       }
     });
@@ -1440,22 +1428,22 @@
       content.innerHTML = `
         <div class="detail-header">
           ${(member.resolved_brand?.logo_url || member.logo_url)
-            ? `<img src="${member.resolved_brand?.logo_url || member.logo_url}" alt="${member.display_name}" class="detail-logo">`
-            : `<div class="detail-logo-placeholder">${member.display_name.charAt(0)}</div>`
+            ? `<img src="${escapeHtml(member.resolved_brand?.logo_url || member.logo_url)}" alt="${escapeHtml(member.display_name)}" class="detail-logo">`
+            : `<div class="detail-logo-placeholder">${escapeHtml(member.display_name.charAt(0))}</div>`
           }
           <div class="detail-title">
             <div class="detail-title-row">
-              <h1>${member.display_name}</h1>
+              <h1>${escapeHtml(member.display_name)}</h1>
               ${foundingBadgeHtml}
             </div>
-            ${member.tagline ? `<p class="tagline">${member.tagline}</p>` : ''}
+            ${member.tagline ? `<p class="tagline">${escapeHtml(member.tagline)}</p>` : ''}
           </div>
         </div>
 
         ${member.markets && member.markets.length > 0 ? `
           <div class="detail-markets">
             <span class="markets-label">Markets:</span>
-            ${member.markets.map(m => `<span class="market-badge">${m}</span>`).join('')}
+            ${member.markets.map(m => `<span class="market-badge">${escapeHtml(m)}</span>`).join('')}
           </div>
         ` : ''}
 
@@ -1465,7 +1453,7 @@
           ${member.description ? `
             <div class="detail-section">
               <h2>About</h2>
-              <p class="detail-description">${member.description}</p>
+              <p class="detail-description">${escapeHtml(member.description)}</p>
             </div>
           ` : ''}
 
@@ -1473,7 +1461,7 @@
             <div class="detail-section">
               <h2>Services & Offerings</h2>
               <div class="detail-offerings">
-                ${member.offerings.map(o => `<span class="offering-tag">${offeringLabels[o] || o}</span>`).join('')}
+                ${member.offerings.map(o => `<span class="offering-tag">${escapeHtml(offeringLabels[o] || o)}</span>`).join('')}
               </div>
             </div>
           ` : ''}
@@ -1523,31 +1511,31 @@
               ${member.contact_email ? `
                 <div class="contact-item">
                   <span>Email:</span>
-                  <a href="mailto:${member.contact_email}">${member.contact_email}</a>
+                  <a href="mailto:${escapeHtml(member.contact_email)}">${escapeHtml(member.contact_email)}</a>
                 </div>
               ` : ''}
               ${member.contact_phone ? `
                 <div class="contact-item">
                   <span>Phone:</span>
-                  <span>${member.contact_phone}</span>
+                  <span>${escapeHtml(member.contact_phone)}</span>
                 </div>
               ` : ''}
               ${member.contact_website ? `
                 <div class="contact-item">
                   <span>Website:</span>
-                  <a href="${member.contact_website}" target="_blank">${new URL(member.contact_website).hostname}</a>
+                  <a href="${escapeHtml(member.contact_website)}" target="_blank">${new URL(member.contact_website).hostname}</a>
                 </div>
               ` : ''}
               ${member.linkedin_url ? `
                 <div class="contact-item">
                   <span>LinkedIn:</span>
-                  <a href="${member.linkedin_url}" target="_blank">View Profile</a>
+                  <a href="${escapeHtml(member.linkedin_url)}" target="_blank">View Profile</a>
                 </div>
               ` : ''}
               ${member.twitter_url ? `
                 <div class="contact-item">
                   <span>Twitter/X:</span>
-                  <a href="${member.twitter_url}" target="_blank">View Profile</a>
+                  <a href="${escapeHtml(member.twitter_url)}" target="_blank">View Profile</a>
                 </div>
               ` : ''}
             </div>

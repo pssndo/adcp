@@ -1,8 +1,8 @@
 ---
 title: Catalog item schemas
-description: Field tables, required fields, and starter templates for every vertical catalog type — job, hotel, vehicle, flight, real estate, education, destination, and app
+description: "AdCP catalog item schemas define required fields and structures for job, hotel, vehicle, flight, real estate, and other vertical data feeds."
+"og:title": "AdCP — Catalog item schemas"
 testable: true
-keywords: [catalog schema, job catalog, hotel catalog, vehicle catalog, flight catalog, real estate catalog, education catalog, destination catalog, app catalog, item schema, universal asset registry]
 ---
 
 # Catalog item schemas
@@ -11,8 +11,9 @@ Each vertical catalog type maps to a single AdCP schema that works across platfo
 
 All vertical items share a common pattern: a unique ID field, core display fields, an optional `assets` array for [typed creative asset pools](/docs/creative/catalogs#typed-catalog-assets), an optional `tags` array for filtering, and an `ext` object for vendor-specific extensions. **Conversion events** listed for each vertical are the standard event names used for [attribution](/docs/media-buy/conversion-tracking) when an ad drives action on a catalog item.
 
-<a id="common-fields"></a>
-**Common fields** — In addition to the domain-specific fields listed in each vertical's table, all vertical items support:
+## Common fields
+
+In addition to the domain-specific fields listed in each vertical's table, all vertical items support:
 
 | Field | Type | Description |
 |---|---|---|

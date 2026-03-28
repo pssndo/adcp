@@ -1,5 +1,7 @@
 ---
 title: get_products
+description: "get_products task — discover advertising inventory in AdCP using natural language campaign briefs or structured filters. Returns matched products with pricing and formats."
+"og:title": "AdCP — get_products"
 testable: true
 ---
 
@@ -9,8 +11,8 @@ Discover available advertising products based on campaign requirements using nat
 
 **Response Time**: ~60 seconds (AI inference with back-end systems)
 
-**Request Schema**: [`/schemas/v2/media-buy/get-products-request.json`](https://adcontextprotocol.org/schemas/v2/media-buy/get-products-request.json)
-**Response Schema**: [`/schemas/v2/media-buy/get-products-response.json`](https://adcontextprotocol.org/schemas/v2/media-buy/get-products-response.json)
+**Request Schema**: [`/schemas/v3/media-buy/get-products-request.json`](https://adcontextprotocol.org/schemas/v3/media-buy/get-products-request.json)
+**Response Schema**: [`/schemas/v3/media-buy/get-products-response.json`](https://adcontextprotocol.org/schemas/v3/media-buy/get-products-response.json)
 
 ## Quick Start
 
@@ -67,7 +69,7 @@ uvx adcp \
   https://test-agent.adcontextprotocol.org/mcp \
   get_products \
   '{"buying_mode":"brief","brief":"Premium athletic footwear with innovative cushioning","brand":{"domain":"acmecorp.com"}}' \
-  --auth 1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ
+  --auth $ADCP_AUTH_TOKEN
 ```
 
 </CodeGroup>
@@ -87,14 +89,14 @@ const result = await testAgent.getProducts({
     domain: 'acmecorp.com'
   },
   filters: {
-    format_types: ['video'],
+    channels: ['ctv'],
     delivery_type: 'guaranteed',
     standard_formats_only: true
   }
 });
 
 if (result.success && result.data) {
-  console.log(`Found ${result.data.products.length} guaranteed video products`);
+  console.log(`Found ${result.data.products.length} guaranteed CTV products`);
 }
 ```
 
@@ -109,12 +111,12 @@ async def discover_with_filters():
             'domain': 'acmecorp.com'
         },
         filters={
-            'format_types': ['video'],
+            'channels': ['ctv'],
             'delivery_type': 'guaranteed',
             'standard_formats_only': True
         }
     )
-    print(f"Found {len(result.products)} guaranteed video products")
+    print(f"Found {len(result.products)} guaranteed CTV products")
 
 asyncio.run(discover_with_filters())
 ```
@@ -130,7 +132,6 @@ asyncio.run(discover_with_filters())
 | `refine` | [Refine[]](#refine-array) | Conditional | Array of change requests for iterating on products and proposals. Required when `buying_mode` is `"refine"`. Must not be provided when `buying_mode` is `"brief"` or `"wholesale"`. See [Refine array](#refine-array) below. |
 | `brand` | BrandRef | No | Brand reference (domain + optional brand_id). Resolved to full identity at execution time. |
 | `account` | AccountRef | No | Account reference for account-specific pricing. Returns products with pricing from this account's rate card. |
-| `buyer_campaign_ref` | string | No | Buyer's campaign label for CRM and ad server correlation (e.g., `"NovaDrink_Meals_Q2"`). Groups related discovery and buy operations. |
 | `catalog` | [Catalog](/docs/creative/catalogs) | No | Catalog of items the buyer wants to promote. The seller matches catalog items against its inventory and returns products where matches exist. Requires `brand`. See [Catalog discovery](#catalog-discovery) below. |
 | `filters` | Filters | No | Structured filters (see below) |
 | `property_list` | PropertyListRef | No | [AdCP 3.0] Reference to a property list for filtering. See [Property Lists](/docs/governance/property/tasks/property_lists) |
@@ -143,8 +144,7 @@ asyncio.run(discover_with_filters())
 |-----------|------|-------------|
 | `delivery_type` | string | Filter by `"guaranteed"` or `"non_guaranteed"` |
 | `is_fixed_price` | boolean | Filter for fixed price vs auction products |
-| `format_types` | string[] | *(uses deprecated FormatCategory)* Filter by format types (e.g., `["video", "display"]`). Consider filtering by `format_ids` instead for precise matching. |
-| `format_ids` | FormatID[] | Filter by specific format IDs. **Recommended over `format_types`.** |
+| `format_ids` | FormatID[] | Filter by specific format IDs |
 | `standard_formats_only` | boolean | Only return products accepting IAB standard formats |
 | `min_exposures` | integer | Minimum exposures needed for measurement validity |
 | `start_date` | string | Campaign start date in ISO 8601 format (YYYY-MM-DD) for availability checks |
@@ -239,7 +239,10 @@ Returns an array of `products` and optionally `proposals`.
 | `delivery_type` | string | `"guaranteed"` or `"non_guaranteed"` |
 | `delivery_measurement` | DeliveryMeasurement | (Optional) How delivery is measured (impressions, views, etc.) |
 | `pricing_options` | PricingOption[] | Available pricing models (CPM, CPCV, etc.). Auction options may include `floor_price` and optional `price_guidance`. Bid-based auction models (CPM, vCPM, CPC, CPCV, CPV) may also include optional `max_bid` (boolean). |
+| `shows` | CollectionSelector[] | (Optional) Collections available in this product. Each entry has `publisher_domain` and `collection_ids`. Buyers resolve full collection objects from the referenced `adagents.json`. See [Collections and installments](/docs/media-buy/product-discovery/collections-and-installments). |
+| `collection_targeting_allowed` | boolean | (Optional, default: false) Whether buyers can target a subset of this product's shows. When false, the product is a bundle. |
 | `brief_relevance` | string | Why this product matches the brief (when brief provided) |
+| `measurement_readiness` | [MeasurementReadiness](/docs/media-buy/conversion-tracking/#measurement-readiness) | (Optional) Whether the buyer's event setup is sufficient for this product's optimization. Only present when the seller can evaluate the buyer's account context. |
 
 ### Proposals Array (Optional)
 
@@ -291,7 +294,7 @@ When the seller cannot complete all work within the `time_budget` (or due to its
 | `description` | string | Yes | Human-readable explanation of what is missing and why. |
 | `estimated_wait` | Duration | No | How much additional time would resolve this scope. |
 
-**See schema for complete field list**: [`get-products-response.json`](https://adcontextprotocol.org/schemas/v2/media-buy/get-products-response.json)
+**See schema for complete field list**: [`get-products-response.json`](https://adcontextprotocol.org/schemas/v3/media-buy/get-products-response.json)
 
 ## Common Scenarios
 
@@ -446,7 +449,7 @@ const result = await testAgent.getProducts({
     domain: 'acmecorp.com'
   },
   filters: {
-    format_types: ['video', 'display']
+    channels: ['display', 'ctv']
   }
 });
 
@@ -468,7 +471,7 @@ async def discover_multi_format():
             'domain': 'acmecorp.com'
         },
         filters={
-            'format_types': ['video', 'display']
+            'channels': ['display', 'ctv']
         }
     )
     print(f"Found {len(result.products)} products supporting video and display")
@@ -755,7 +758,7 @@ uvx adcp \
   https://test-agent.adcontextprotocol.org/mcp \
   get_products \
   '{"buying_mode":"wholesale","brand":{"domain":"acmecorp.com"},"catalog":{"type":"product","tags":["ketchup","organic"],"category":"food/condiments"},"filters":{"channels":["retail_media"]}}' \
-  --auth 1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ
+  --auth $ADCP_AUTH_TOKEN
 ```
 
 </CodeGroup>
@@ -1380,7 +1383,7 @@ After discovering products:
 
 1. **Review Options**: Compare products, pricing, and targeting capabilities
 2. **Create Media Buy**: Use [`create_media_buy`](/docs/media-buy/task-reference/create_media_buy) to execute campaign
-3. **Prepare Creatives**: Use [`list_creative_formats`](/docs/media-buy/task-reference/list_creative_formats) to see format requirements
+3. **Prepare Creatives**: Use [`list_creative_formats`](/docs/creative/task-reference/list_creative_formats) to see format requirements
 4. **Upload Assets**: Use [`sync_creatives`](/docs/creative/task-reference/sync_creatives) to provide creative assets
 
 ## Learn More

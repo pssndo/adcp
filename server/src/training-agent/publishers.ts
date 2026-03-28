@@ -6,7 +6,7 @@
  * factory uses these to generate schema-compliant products.
  */
 
-import type { PublisherProfile } from './types.js';
+import type { PublisherProfile, ShowDefinition } from './types.js';
 
 export const PUBLISHERS: PublisherProfile[] = [
   {
@@ -52,6 +52,57 @@ export const PUBLISHERS: PublisherProfile[] = [
         tags: ['news', 'premium', 'ctv', 'streaming'],
       },
     ],
+    shows: [
+      {
+        showId: 'pinnacle_show_nightline',
+        name: 'Pinnacle Nightline',
+        genre: ['news', 'current_affairs'],
+        cadence: 'daily',
+        status: 'active',
+        description: 'Nightly news program covering national and international stories. Pinnacle\'s flagship broadcast.',
+        contentRatings: [
+          { system: 'tv_parental', rating: 'TV-PG' },
+          { system: 'bbfc', rating: 'PG' },
+        ],
+        talent: [
+          { name: 'David Chen', role: 'host' },
+          { name: 'Priya Nair', role: 'correspondent' },
+        ],
+        channels: ['ctv', 'olv'],
+        episodes: [
+          { episodeId: 'pn_ep_20260313', title: 'Trade policy shifts and market impact', status: 'aired', scheduledAt: '2026-03-13T23:00:00Z', durationSeconds: 3600 },
+          { episodeId: 'pn_ep_20260314', title: 'AI regulation roundtable', status: 'live', scheduledAt: '2026-03-14T23:00:00Z', durationSeconds: 3600 },
+          { episodeId: 'pn_ep_20260315', title: 'Weekend edition', status: 'scheduled', scheduledAt: '2026-03-15T23:00:00Z' },
+        ],
+      },
+      {
+        showId: 'pinnacle_show_the_ember',
+        name: 'The Ember',
+        genre: ['drama', 'food'],
+        cadence: 'weekly',
+        status: 'active',
+        description: 'Award-winning drama series following a chef navigating the pressure of running a top restaurant.',
+        limitedSeries: {
+          totalEpisodes: 8,
+          starts: '2026-02-28T21:00:00Z',
+          ends: '2026-04-18T21:00:00Z',
+        },
+        contentRatings: [
+          { system: 'tv_parental', rating: 'TV-MA' },
+          { system: 'bbfc', rating: '15' },
+        ],
+        talent: [
+          { name: 'Marcus Reed', role: 'cast' },
+          { name: 'Sofia Alvarez', role: 'cast' },
+        ],
+        channels: ['ctv'],
+        episodes: [
+          { episodeId: 'ember_s3_e01', title: 'New kitchen, old ghosts', status: 'aired', scheduledAt: '2026-02-28T21:00:00Z', durationSeconds: 2520 },
+          { episodeId: 'ember_s3_e02', title: 'The investor', status: 'aired', scheduledAt: '2026-03-07T21:00:00Z', durationSeconds: 2640 },
+          { episodeId: 'ember_s3_e03', title: 'Fire walk', status: 'scheduled', scheduledAt: '2026-03-14T21:00:00Z' },
+        ],
+      },
+    ],
   },
 
   {
@@ -87,6 +138,55 @@ export const PUBLISHERS: PublisherProfile[] = [
         tags: ['audio', 'podcast'],
       },
     ],
+    shows: [
+      {
+        showId: 'wavelength_show_signal_noise',
+        name: 'Signal & Noise',
+        genre: ['technology', 'business'],
+        cadence: 'weekly',
+        status: 'active',
+        description: 'Weekly deep-dive into ad tech, AI, and the future of media buying. Hosted by Maren Solberg.',
+        contentRatings: [{ system: 'tv_parental', rating: 'TV-PG' }],
+        talent: [
+          { name: 'Maren Solberg', role: 'host' },
+          { name: 'Kai Petrov', role: 'host' },
+        ],
+        distribution: [
+          { publisherDomain: 'podcasts.wavelengthaudio.example', identifiers: [
+            { type: 'spotify_show_id', value: '4xR2nPmkQL9dWgT3E7aN' },
+            { type: 'apple_podcast_id', value: '1678234567' },
+            { type: 'rss_url', value: 'https://feeds.wavelengthaudio.example/signal-noise' },
+          ]},
+        ],
+        channels: ['podcast', 'streaming_audio'],
+        episodes: [
+          { episodeId: 'sn_ep_042', title: 'Why agents are replacing DSPs', status: 'aired', scheduledAt: '2026-03-07T10:00:00Z', durationSeconds: 2700 },
+          { episodeId: 'sn_ep_043', title: 'The LEAP standard: friend or foe?', status: 'aired', scheduledAt: '2026-03-14T10:00:00Z', durationSeconds: 2280 },
+          { episodeId: 'sn_ep_044', title: 'Cross-seller matching in practice', status: 'scheduled', scheduledAt: '2026-03-21T10:00:00Z' },
+        ],
+      },
+      {
+        showId: 'wavelength_show_founders_freq',
+        name: 'Founders Frequency',
+        genre: ['business', 'entrepreneurship'],
+        cadence: 'irregular',
+        status: 'active',
+        description: 'Interviews with founders building the next wave of media and commerce companies.',
+        contentRatings: [{ system: 'tv_parental', rating: 'TV-PG' }],
+        talent: [{ name: 'Lina Torres', role: 'host' }],
+        distribution: [
+          { publisherDomain: 'podcasts.wavelengthaudio.example', identifiers: [
+            { type: 'spotify_show_id', value: '7yQ4nRkPL3dWgT3E9bZ' },
+            { type: 'apple_podcast_id', value: '1678234890' },
+          ]},
+        ],
+        channels: ['podcast'],
+        episodes: [
+          { episodeId: 'ff_ep_018', title: 'Scaling a retail media network from zero', status: 'aired', scheduledAt: '2026-03-01T08:00:00Z', durationSeconds: 3120 },
+          { episodeId: 'ff_ep_019', title: 'When your buyer is an AI agent', status: 'scheduled', scheduledAt: '2026-03-15T08:00:00Z' },
+        ],
+      },
+    ],
   },
 
   {
@@ -102,7 +202,7 @@ export const PUBLISHERS: PublisherProfile[] = [
         doohParameters: { type: 'dooh', sov_percentage: 12.5, loop_duration_seconds: 480, min_plays_per_hour: 8 },
       },
       { model: 'cpm', currency: 'USD', fixedPrice: 8, minSpendPerPackage: 1000 },
-      { model: 'time', currency: 'USD', fixedPrice: 800, timeParameters: { unit: 'week', min_duration: 1, max_duration: 52 } },
+      { model: 'time', currency: 'USD', fixedPrice: 800, timeParameters: { time_unit: 'week', min_duration: 1, max_duration: 52 } },
       {
         model: 'flat_rate', currency: 'GBP', fixedPrice: 2000, minSpendPerPackage: 2000,
         doohParameters: { type: 'dooh', sov_percentage: 12.5, loop_duration_seconds: 480, min_plays_per_hour: 8 },
@@ -247,6 +347,96 @@ export const PUBLISHERS: PublisherProfile[] = [
         tags: ['sports', 'live', 'web'],
       },
     ],
+    shows: [
+      {
+        showId: 'viewpoint_show_championship',
+        name: 'Championship League Live',
+        genre: ['sports', 'live_event'],
+        cadence: 'weekly',
+        status: 'active',
+        description: 'Live coverage of Championship League matches with pre-game analysis, in-game commentary, and post-game highlights.',
+        contentRatings: [{ system: 'tv_parental', rating: 'TV-G' }],
+        talent: [
+          { name: 'James Okoro', role: 'commentator' },
+          { name: 'Elena Voss', role: 'analyst' },
+        ],
+        channels: ['ctv', 'olv', 'linear_tv'],
+        episodes: [
+          {
+            episodeId: 'cl_match_20260315',
+            title: 'Quarterfinal: Northside FC vs Metro United',
+            status: 'scheduled',
+            scheduledAt: '2026-03-15T19:00:00Z',
+            durationSeconds: 10800,
+          },
+          {
+            episodeId: 'cl_match_20260316',
+            title: 'Quarterfinal: Harbor City vs Crestwood Athletic',
+            status: 'scheduled',
+            scheduledAt: '2026-03-16T15:00:00Z',
+            durationSeconds: 10800,
+          },
+        ],
+      },
+      {
+        showId: 'viewpoint_show_championship_finals',
+        name: 'Championship League Finals 2026',
+        genre: ['sports', 'live_event'],
+        cadence: 'event',
+        status: 'upcoming',
+        description: 'Live coverage of the 2026 Championship League Finals — pre-match build-up, full match, and post-match analysis.',
+        special: {
+          name: 'Championship League Finals 2026',
+          category: 'championship',
+          starts: '2026-05-30T19:00:00Z',
+          ends: '2026-05-30T23:00:00Z',
+        },
+        contentRatings: [{ system: 'tv_parental', rating: 'TV-G' }],
+        talent: [
+          { name: 'James Okoro', role: 'commentator' },
+          { name: 'Elena Voss', role: 'analyst' },
+        ],
+        channels: ['ctv', 'olv', 'linear_tv'],
+        episodes: [
+          {
+            episodeId: 'clf_prematch',
+            title: 'Finals pre-match build-up',
+            status: 'scheduled',
+            scheduledAt: '2026-05-30T19:00:00Z',
+            durationSeconds: 3600,
+          },
+          {
+            episodeId: 'clf_match',
+            title: 'Championship League Final',
+            status: 'scheduled',
+            scheduledAt: '2026-05-30T20:00:00Z',
+            durationSeconds: 7200,
+          },
+          {
+            episodeId: 'clf_postmatch',
+            title: 'Finals post-match analysis',
+            status: 'scheduled',
+            scheduledAt: '2026-05-30T22:00:00Z',
+            durationSeconds: 3600,
+          },
+        ],
+      },
+      {
+        showId: 'viewpoint_show_sports_desk',
+        name: 'The Sports Desk',
+        genre: ['sports', 'news'],
+        cadence: 'daily',
+        status: 'active',
+        description: 'Daily sports news roundup with scores, trades, and analysis.',
+        contentRatings: [{ system: 'tv_parental', rating: 'TV-PG' }],
+        talent: [{ name: 'Rachel Kim', role: 'host' }],
+        channels: ['ctv', 'olv'],
+        episodes: [
+          { episodeId: 'sd_20260314', title: 'Friday edition — playoff preview', status: 'aired', scheduledAt: '2026-03-14T18:00:00Z', durationSeconds: 1800 },
+          { episodeId: 'sd_20260315', title: 'Saturday edition', status: 'scheduled', scheduledAt: '2026-03-15T18:00:00Z' },
+        ],
+      },
+    ],
   },
 
   {
@@ -259,7 +449,7 @@ export const PUBLISHERS: PublisherProfile[] = [
     pricingTemplates: [
       { model: 'cpc', currency: 'USD', floorPrice: 0.50, priceGuidance: { suggested: 1.20, range: { min: 0.50, max: 3.00 } } },
       { model: 'cpm', currency: 'USD', floorPrice: 5, priceGuidance: { suggested: 9, range: { min: 5, max: 15 } } },
-      { model: 'cpv', currency: 'USD', floorPrice: 0.01, priceGuidance: { suggested: 0.03, range: { min: 0.01, max: 0.08 } }, cpvParameters: { view_threshold: { type: 'duration', value: 2, unit: 'seconds' } } },
+      { model: 'cpv', currency: 'USD', floorPrice: 0.01, priceGuidance: { suggested: 0.03, range: { min: 0.01, max: 0.08 } }, cpvParameters: { view_threshold: { duration_seconds: 2 } } },
     ],
     measurementProvider: 'Sparq first-party analytics with DoubleVerify',
     measurementNotes: 'First-party engagement and conversion tracking. DoubleVerify brand safety and viewability. Cross-device identity graph for reach/frequency.',
@@ -358,7 +548,7 @@ export const PUBLISHERS: PublisherProfile[] = [
     pricingTemplates: [
       { model: 'cpm', currency: 'USD', floorPrice: 18, priceGuidance: { suggested: 30, range: { min: 18, max: 50 } } },
       { model: 'cpc', currency: 'USD', floorPrice: 2, priceGuidance: { suggested: 4, range: { min: 2, max: 8 } } },
-      { model: 'cpa', currency: 'USD', fixedPrice: 8, eventType: 'agent_session' },
+      { model: 'cpa', currency: 'USD', fixedPrice: 8, eventType: 'custom' },
       { model: 'cpm', currency: 'USD', fixedPrice: 35, minSpendPerPackage: 10000 },
       { model: 'flat_rate', currency: 'USD', fixedPrice: 50000, minSpendPerPackage: 50000 },
     ],
@@ -456,7 +646,7 @@ export const PUBLISHERS: PublisherProfile[] = [
     pricingTemplates: [
       { model: 'flat_rate', currency: 'USD', fixedPrice: 35000, minSpendPerPackage: 15000 },
       { model: 'cpm', currency: 'USD', fixedPrice: 22, minSpendPerPackage: 5000 },
-      { model: 'time', currency: 'USD', fixedPrice: 12000, timeParameters: { unit: 'month', min_duration: 1, max_duration: 12 } },
+      { model: 'time', currency: 'USD', fixedPrice: 12000, timeParameters: { time_unit: 'month', min_duration: 1, max_duration: 12 } },
     ],
     measurementProvider: 'Alliance for Audited Media (AAM) with comScore digital',
     measurementNotes: 'AAM-audited print circulation. comScore digital measurement. Print ad recall studies available quarterly. Digital viewability via IAS.',

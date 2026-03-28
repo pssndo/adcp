@@ -15,6 +15,7 @@ import { ModelConfig } from '../config/models.js';
 import { verifyWebhookSignature as verifyZoomSignature } from '../integrations/zoom.js';
 import {
   handleRecordingCompleted,
+  handleTranscriptCompleted,
   handleMeetingStarted,
   handleMeetingEnded,
 } from '../services/meeting-service.js';
@@ -46,6 +47,9 @@ import {
   processInteraction,
   type InteractionContext,
 } from '../addie/services/interaction-analyzer.js';
+import * as relationshipDb from '../db/relationship-db.js';
+import * as personEvents from '../db/person-events-db.js';
+import { emailDb } from '../db/email-db.js';
 
 const logger = createLogger('webhooks');
 
@@ -84,6 +88,33 @@ interface ResendInboundPayload {
       filename: string;
       content_type: string;
     }>;
+  };
+}
+
+/**
+ * Resend tracking webhook payload (delivery, open, click, bounce events)
+ */
+interface ResendTrackingPayload {
+  type: 'email.delivered' | 'email.opened' | 'email.clicked' | 'email.bounced' | 'email.complained';
+  created_at: string;
+  data: {
+    email_id: string;
+    to: string[];
+    from: string;
+    subject: string;
+    created_at: string;
+    // Click-specific
+    click?: {
+      ipAddress: string;
+      link: string;
+      timestamp: string;
+      userAgent: string;
+    };
+    // Bounce-specific
+    bounce?: {
+      message: string;
+      type?: string;
+    };
   };
 }
 
@@ -317,7 +348,8 @@ async function fetchEmailBody(emailId: string): Promise<FetchEmailResult | null>
   logger.debug({ emailId }, 'Fetching email body from Resend');
 
   try {
-    const response = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, {
+    // CodeQL: emailId comes from Resend webhook payload, URL is always https://api.resend.com
+    const response = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, { // lgtm[js/request-forgery]
       headers: {
         Authorization: `Bearer ${RESEND_API_KEY}`,
       },
@@ -1144,6 +1176,24 @@ export function createWebhooksRouter(): Router {
               insightPreview: result.insights.substring(0, 100) + (result.insights.length > 100 ? '...' : ''),
             }, 'Processed prospect email');
 
+            // Wire email reply into relationship model (fire and forget)
+            const senderEmail = parseEmailAddress(data.from).email;
+            if (senderEmail) {
+              relationshipDb.resolvePersonId({ email: senderEmail })
+                .then(async (personId) => {
+                  await relationshipDb.recordPersonMessage(personId, 'email');
+                  await personEvents.recordEvent(personId, 'message_received', {
+                    channel: 'email',
+                    data: { email_id: data.email_id, subject: data.subject },
+                  });
+                  await relationshipDb.deriveSentiment(personId);
+                  await relationshipDb.evaluateStageTransitions(personId);
+                })
+                .catch(err => {
+                  logger.warn({ err, email: senderEmail }, 'Failed to update relationship from email');
+                });
+            }
+
             // Check for Addie invocation and respond if needed
             // This runs async - don't block the webhook response
             if (result.emailContent?.text) {
@@ -1261,6 +1311,128 @@ export function createWebhooksRouter(): Router {
   );
 
   // =========================================================================
+  // Resend Tracking Webhooks (delivery, open, click, bounce)
+  // =========================================================================
+
+  router.post(
+    '/resend-tracking',
+    (req: Request, res: Response, next) => {
+      let rawBody = '';
+      req.setEncoding('utf8');
+
+      req.on('data', (chunk: string) => {
+        rawBody += chunk;
+      });
+
+      req.on('end', () => {
+        (req as Request & { rawBody: string }).rawBody = rawBody;
+        try {
+          req.body = JSON.parse(rawBody);
+          next();
+        } catch {
+          res.status(400).json({ error: 'Invalid JSON' });
+        }
+      });
+    },
+    async (req: Request, res: Response) => {
+      try {
+        const rawBody = (req as Request & { rawBody: string }).rawBody;
+
+        if (!verifyResendWebhook(req, rawBody)) {
+          logger.warn('Rejecting tracking webhook: invalid signature');
+          return res.status(401).json({ error: 'Invalid signature' });
+        }
+
+        const payload = req.body as ResendTrackingPayload;
+        const { type, data } = payload;
+        const resendEmailId = data.email_id;
+
+        logger.info({ type, resendEmailId }, 'Processing Resend tracking event');
+
+        // Look up the email event to get the workos_user_id for person resolution
+        const emailEvent = await emailDb.getByResendId(resendEmailId);
+
+        switch (type) {
+          case 'email.delivered':
+            await emailDb.recordDelivery(resendEmailId);
+            if (emailEvent?.workos_user_id) {
+              relationshipDb.resolvePersonId({ workos_user_id: emailEvent.workos_user_id, email: emailEvent.recipient_email })
+                .then(personId => personEvents.recordEvent(personId, 'email_delivered', {
+                  channel: 'email',
+                  data: { resend_email_id: resendEmailId },
+                }))
+                .catch(err => logger.warn({ err, resendEmailId }, 'Failed to record delivery event'));
+            }
+            break;
+
+          case 'email.opened':
+            await emailDb.recordOpen(resendEmailId);
+            if (emailEvent?.workos_user_id) {
+              relationshipDb.resolvePersonId({ workos_user_id: emailEvent.workos_user_id, email: emailEvent.recipient_email })
+                .then(personId => personEvents.recordEvent(personId, 'email_opened', {
+                  channel: 'email',
+                  data: { resend_email_id: resendEmailId },
+                }))
+                .catch(err => logger.warn({ err, resendEmailId }, 'Failed to record open event'));
+            }
+            break;
+
+          case 'email.clicked':
+            await emailDb.recordOpen(resendEmailId); // Also counts as an open
+            if (emailEvent?.workos_user_id) {
+              relationshipDb.resolvePersonId({ workos_user_id: emailEvent.workos_user_id, email: emailEvent.recipient_email })
+                .then(personId => personEvents.recordEvent(personId, 'email_clicked', {
+                  channel: 'email',
+                  data: {
+                    resend_email_id: resendEmailId,
+                    link: data.click?.link,
+                  },
+                }))
+                .catch(err => logger.warn({ err, resendEmailId }, 'Failed to record click event'));
+            }
+            break;
+
+          case 'email.bounced':
+            await emailDb.recordBounce(resendEmailId, data.bounce?.message);
+            if (emailEvent?.workos_user_id) {
+              relationshipDb.resolvePersonId({ workos_user_id: emailEvent.workos_user_id, email: emailEvent.recipient_email })
+                .then(async (personId) => {
+                  await personEvents.recordEvent(personId, 'email_bounced', {
+                    channel: 'email',
+                    data: { resend_email_id: resendEmailId, reason: data.bounce?.message },
+                  });
+                  await relationshipDb.updateSentiment(personId, 'negative');
+                })
+                .catch(err => logger.warn({ err, resendEmailId }, 'Failed to record bounce event'));
+            }
+            break;
+
+          case 'email.complained':
+            // Treat complaint as opt-out — set the permanent flag, not just sentiment
+            if (emailEvent?.workos_user_id) {
+              relationshipDb.resolvePersonId({ workos_user_id: emailEvent.workos_user_id, email: emailEvent.recipient_email })
+                .then(async (personId) => {
+                  await relationshipDb.setOptedOut(personId, true);
+                  await relationshipDb.updateSentiment(personId, 'negative');
+                  await personEvents.recordEvent(personId, 'opted_out', {
+                    channel: 'email',
+                    data: { reason: 'spam_complaint', resend_email_id: resendEmailId },
+                  });
+                })
+                .catch(err => logger.warn({ err, resendEmailId }, 'Failed to process complaint'));
+            }
+            break;
+        }
+
+        return res.status(200).json({ ok: true });
+      } catch (error) {
+        logger.error({ error }, 'Error processing Resend tracking webhook');
+        res.status(500).json({ error: 'Internal error' });
+      }
+    }
+  );
+
+  // =========================================================================
   // Zoom Webhooks
   // =========================================================================
 
@@ -1303,6 +1475,7 @@ export function createWebhooksRouter(): Router {
 
         // Handle URL validation challenge from Zoom
         // https://developers.zoom.us/docs/api/rest/webhook-reference/#validate-your-webhook-endpoint
+        // codeql[js/user-controlled-bypass] - Zoom URL validation challenge requires reading event type from webhook body
         if (body.event === 'endpoint.url_validation') {
           const plainToken = body.payload?.plainToken;
           if (!plainToken) {
@@ -1331,6 +1504,7 @@ export function createWebhooksRouter(): Router {
 
         // Verify webhook signature for real events
         const signature = req.headers['x-zm-signature'] as string;
+        // codeql[js/user-controlled-bypass] - webhook signature verification requires reading headers
         const timestamp = req.headers['x-zm-request-timestamp'] as string;
 
         if (!signature || !timestamp) {
@@ -1357,15 +1531,24 @@ export function createWebhooksRouter(): Router {
 
         // Handle different event types
         switch (body.event) {
-          case 'recording.completed':
+          case 'recording.completed': {
+            const recUuid = body.payload?.object?.uuid;
+            const recId = body.payload?.object?.id;
+            if (recUuid && typeof recUuid === 'string' && recUuid.length < 256) {
+              await handleRecordingCompleted(recUuid, recId?.toString());
+            } else if (recUuid) {
+              logger.warn({ meetingUuidType: typeof recUuid }, 'Invalid meetingUuid format');
+            }
+            break;
+          }
+
           case 'recording.transcript_completed': {
-            const meetingUuid = body.payload?.object?.uuid;
-            const meetingId = body.payload?.object?.id;
-            if (meetingUuid && typeof meetingUuid === 'string' && meetingUuid.length < 256) {
-              // Pass both UUID and numeric ID - we store the numeric ID in our DB
-              await handleRecordingCompleted(meetingUuid, meetingId?.toString());
-            } else if (meetingUuid) {
-              logger.warn({ meetingUuidType: typeof meetingUuid }, 'Invalid meetingUuid format');
+            const txUuid = body.payload?.object?.uuid;
+            const txId = body.payload?.object?.id;
+            if (txUuid && typeof txUuid === 'string' && txUuid.length < 256) {
+              await handleTranscriptCompleted(txUuid, txId?.toString());
+            } else if (txUuid) {
+              logger.warn({ meetingUuidType: typeof txUuid }, 'Invalid meetingUuid format');
             }
             break;
           }

@@ -173,7 +173,6 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       logger.error({ err: error }, "Error fetching admin products");
       res.status(500).json({
         error: "Failed to fetch products",
-        message: error instanceof Error ? error.message : "Unknown error",
       });
     }
   });
@@ -271,7 +270,6 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       logger.error({ err: error }, "Error creating product");
       res.status(500).json({
         error: "Failed to create product",
-        message: error instanceof Error ? error.message : "Unknown error",
       });
     }
   });
@@ -336,7 +334,6 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       logger.error({ err: error, productId: req.params.productId }, "Error updating product");
       res.status(500).json({
         error: "Failed to update product",
-        message: error instanceof Error ? error.message : "Unknown error",
       });
     }
   });
@@ -380,7 +377,6 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       logger.error({ err: error, productId: req.params.productId }, "Error archiving product");
       res.status(500).json({
         error: "Failed to archive product",
-        message: error instanceof Error ? error.message : "Unknown error",
       });
     }
   });
@@ -417,7 +413,6 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       logger.error({ err: error, customerId: req.params.customerId }, "Error fetching pending invoices");
       res.status(500).json({
         error: "Failed to fetch pending invoices",
-        message: error instanceof Error ? error.message : "Unknown error",
       });
     }
   });
@@ -468,7 +463,6 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       logger.error({ err: error, invoiceId: req.params.invoiceId }, "Error voiding invoice");
       res.status(500).json({
         error: "Failed to void invoice",
-        message: error instanceof Error ? error.message : "Unknown error",
       });
     }
   });
@@ -519,7 +513,6 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       logger.error({ err: error, invoiceId: req.params.invoiceId }, "Error deleting draft invoice");
       res.status(500).json({
         error: "Failed to delete invoice",
-        message: error instanceof Error ? error.message : "Unknown error",
       });
     }
   });
@@ -635,7 +628,6 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       logger.error({ err: error }, "Error fetching Stripe customers");
       res.status(500).json({
         error: "Internal server error",
-        message: error instanceof Error ? error.message : "Failed to fetch customers",
       });
     }
   });
@@ -723,11 +715,12 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       let subscriptionSyncError: string | null = null;
       if (stripe) {
         try {
-          const customer = await stripe.customers.retrieve(customerId, {
+          const customerResp = await stripe.customers.retrieve(customerId, {
             expand: ["subscriptions"],
           });
+          const customer = customerResp as Stripe.Customer | Stripe.DeletedCustomer;
 
-          if (!customer.deleted) {
+          if (!('deleted' in customer && customer.deleted)) {
             const subscriptions = (customer as Stripe.Customer).subscriptions;
             if (subscriptions && subscriptions.data.length > 0) {
               const subscription = subscriptions.data[0];
@@ -789,7 +782,6 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       logger.error({ err: error, customerId, org_id }, "Error linking Stripe customer");
       res.status(500).json({
         error: "Internal server error",
-        message: error instanceof Error ? error.message : "Failed to link customer",
       });
     }
   });
@@ -836,14 +828,14 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       logger.error({ err: error, customerId }, "Error unlinking Stripe customer");
       res.status(500).json({
         error: "Internal server error",
-        message: error instanceof Error ? error.message : "Failed to unlink customer",
       });
     }
   });
 
   // GET /api/admin/org-search - Search organizations for linking
   apiRouter.get("/org-search", requireAuth, requireAdmin, async (req, res) => {
-    const query = req.query.q as string;
+    const rawQuery = req.query.q;
+    const query = Array.isArray(rawQuery) ? String(rawQuery[0]) : String(rawQuery || '');
 
     if (!query || query.length < 2) {
       return res.json({ organizations: [] });
@@ -869,7 +861,6 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       logger.error({ err: error }, "Error searching organizations");
       res.status(500).json({
         error: "Internal server error",
-        message: error instanceof Error ? error.message : "Failed to search organizations",
       });
     }
   });
@@ -903,17 +894,19 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       }
 
       // Fetch customer to check for subscriptions and invoices
-      const customer = await stripe.customers.retrieve(customerId, {
+      const customerResp = await stripe.customers.retrieve(customerId, {
         expand: ["subscriptions"],
       });
+      const customerRaw = customerResp as Stripe.Customer | Stripe.DeletedCustomer;
 
-      if (customer.deleted) {
+      if ('deleted' in customerRaw && customerRaw.deleted) {
         return res.status(404).json({ error: "Customer already deleted" });
       }
+      const cust = customerRaw as Stripe.Customer;
 
       // Check for active subscriptions
-      if (customer.subscriptions && customer.subscriptions.data.length > 0) {
-        const activeSubscriptions = customer.subscriptions.data.filter(
+      if (cust.subscriptions && cust.subscriptions.data.length > 0) {
+        const activeSubscriptions = cust.subscriptions.data.filter(
           (s) => s.status === "active" || s.status === "trialing"
         );
         if (activeSubscriptions.length > 0) {
@@ -938,7 +931,6 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       logger.error({ err: error, customerId }, "Error deleting Stripe customer");
       res.status(500).json({
         error: "Internal server error",
-        message: error instanceof Error ? error.message : "Failed to delete customer",
       });
     }
   });
@@ -967,7 +959,6 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       logger.error({ err: error }, "Error finding Stripe customer conflicts");
       res.status(500).json({
         error: "Internal server error",
-        message: error instanceof Error ? error.message : "Failed to find conflicts",
       });
     }
   });
@@ -1072,7 +1063,6 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       logger.error({ err: error }, "Error resolving Stripe customer conflict");
       res.status(500).json({
         error: "Internal server error",
-        message: error instanceof Error ? error.message : "Failed to resolve conflict",
       });
     }
   });
@@ -1096,13 +1086,15 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
     if (!stripe) return null;
 
     try {
-      const customer = await stripe.customers.retrieve(customerId, {
+      const customerResp = await stripe.customers.retrieve(customerId, {
         expand: ["subscriptions"],
       });
+      const customerRaw2 = customerResp as Stripe.Customer | Stripe.DeletedCustomer;
 
-      if (customer.deleted) {
+      if ('deleted' in customerRaw2 && customerRaw2.deleted) {
         return null;
       }
+      const cust = customerRaw2 as Stripe.Customer;
 
       // Count paid invoices and total paid
       let paidInvoiceCount = 0;
@@ -1129,18 +1121,18 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       }
 
       const activeSubscriptions =
-        customer.subscriptions?.data.filter((s) => s.status === "active" || s.status === "trialing").length ?? 0;
+        cust.subscriptions?.data.filter((s) => s.status === "active" || s.status === "trialing").length ?? 0;
 
-      const hasPaymentMethod = !!customer.default_source || !!customer.invoice_settings?.default_payment_method;
+      const hasPaymentMethod = !!cust.default_source || !!cust.invoice_settings?.default_payment_method;
 
       // Customer has activity if: active subs, open invoices, or paid invoices
       const hasActivity = activeSubscriptions > 0 || openInvoiceCount > 0 || paidInvoiceCount > 0;
 
       return {
         customer_id: customerId,
-        name: customer.name ?? null,
-        email: customer.email ?? null,
-        created: customer.created,
+        name: cust.name ?? null,
+        email: cust.email ?? null,
+        created: cust.created,
         has_payment_method: hasPaymentMethod,
         active_subscriptions: activeSubscriptions,
         open_invoice_count: openInvoiceCount,
@@ -1224,7 +1216,6 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       logger.error({ err: error }, "Error finding Stripe customer mismatches");
       res.status(500).json({
         error: "Internal server error",
-        message: error instanceof Error ? error.message : "Failed to find mismatches",
       });
     }
   });
@@ -1402,7 +1393,6 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       logger.error({ err: error }, "Error resolving Stripe customer mismatch");
       res.status(500).json({
         error: "Internal server error",
-        message: error instanceof Error ? error.message : "Failed to resolve mismatch",
       });
     }
   });
@@ -1459,7 +1449,6 @@ export function createBillingRouter(): { pageRouter: Router; apiRouter: Router }
       logger.error({ err: error }, "Error unlinking Stripe customer");
       res.status(500).json({
         error: "Internal server error",
-        message: error instanceof Error ? error.message : "Failed to unlink customer",
       });
     }
   });

@@ -1,11 +1,15 @@
 ---
 title: Agentic eXecution Engine (AXE)
-description: Real-time execution layer for brand suitability, frequency capping, and dynamic audience targeting in AdCP campaigns.
-keywords: [AXE, agentic execution engine, real-time targeting, brand suitability, frequency capping, audience targeting, decisioning]
+description: "Agentic eXecution Engine (AXE) — AdCP's real-time execution layer for brand suitability enforcement, frequency capping, and dynamic audience targeting at impression time."
+"og:title": "AdCP — Agentic eXecution Engine (AXE)"
 testable: true
 ---
 
-The Agentic eXecution Engine (AXE) is AdCP's real-time execution layer that enables dynamic audience targeting, brand suitability enforcement, and frequency management at impression time.
+<Warning>
+AXE is deprecated. The [Trusted Match Protocol (TMP)](/docs/trusted-match) replaces AXE with structural privacy separation, multi-surface support (web, mobile, CTV, AI assistants, retail media), and a standardized offer model. New integrations should use TMP. Existing AXE integrations will continue to work — the `axei`/`axex`/`axem` segment model maps to TMP's offers and signals.
+</Warning>
+
+The Agentic eXecution Engine (AXE) is AdCP's original real-time execution layer that enables dynamic audience targeting, brand suitability enforcement, and frequency management at impression time.
 
 ## Two-Phase Workflow
 
@@ -116,7 +120,6 @@ Advertiser CRM
 **2. Create media buy with AXE targeting:**
 ```json
 {
-  "buyer_ref": "acme_acquisition_q1",
   "packages": [{
     "product_id": "premium_video_millennials",
     "budget": { "amount": 50000 },

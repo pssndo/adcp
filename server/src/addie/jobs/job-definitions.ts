@@ -6,15 +6,12 @@
  */
 
 import { jobScheduler } from './scheduler.js';
-import { runDocumentIndexerJob } from './committee-document-indexer.js';
+import { runDocumentIndexerJob, generateAssetDescriptions } from './committee-document-indexer.js';
 import { runSummaryGeneratorJob } from './committee-summary-generator.js';
-import { runOutreachScheduler } from '../services/proactive-outreach.js';
+import { runRelationshipOrchestratorCycle } from '../services/relationship-orchestrator.js';
 import { enrichMissingOrganizations } from '../../services/enrichment.js';
-import { runMoltbookPosterJob } from './moltbook-poster.js';
-import { runMoltbookEngagementJob } from './moltbook-engagement.js';
 import { runTaskReminderJob } from './task-reminder.js';
-import { runEngagementScoringJob } from './engagement-scoring.js';
-import { runGoalFollowUpJob } from './goal-follow-up.js';
+// engagement-scoring job removed — old scoring replaced by person_relationships/person_events
 import {
   processPendingResources,
   processRssPerspectives,
@@ -33,7 +30,11 @@ import { runGeoContentPlannerJob } from './geo-content-planner.js';
 import { processUntriagedDomains, escalateUnclaimedProspects } from '../../services/prospect-triage.js';
 import { runWeeklyDigestJob } from './weekly-digest.js';
 import { runSocialPostIdeasJob } from './social-post-ideas.js';
+import { runConversationInsightsJob } from './conversation-insights.js';
 import { autoLinkUnmappedSlackUsers, autoAddVerifiedDomainUsersAsMembers } from '../../slack/sync.js';
+import { runCredentialDigestJob } from './credential-digest.js';
+import { runWgDigestJob, runWgDigestPrepJob } from './wg-digest.js';
+import { runComplianceHeartbeatJob } from './compliance-heartbeat.js';
 import { eventsDb } from '../../db/events-db.js';
 import { NotificationDatabase } from '../../db/notification-db.js';
 import { notifyUser } from '../../notifications/notification-service.js';
@@ -100,6 +101,19 @@ export function registerAllJobs(): void {
     shouldLogResult: (r) => r.documentsChecked > 0,
   });
 
+  // Asset description generator - uses Claude vision to describe extracted images
+  jobScheduler.register({
+    name: 'asset-description-generator',
+    description: 'Asset description generator',
+    interval: { value: 30, unit: 'minutes' },
+    initialDelay: { value: 3, unit: 'minutes' },
+    runner: async () => {
+      const described = await generateAssetDescriptions(5);
+      return { assetsDescribed: described };
+    },
+    shouldLogResult: (r: { assetsDescribed: number }) => r.assetsDescribed > 0,
+  });
+
   // Summary generator - generates AI summaries for committees
   jobScheduler.register({
     name: 'summary-generator',
@@ -111,14 +125,14 @@ export function registerAllJobs(): void {
     shouldLogResult: (r) => r.summariesGenerated > 0,
   });
 
-  // Proactive outreach - sends DMs to eligible users (has internal per-user business hours check)
+  // Relationship orchestrator - continues member relationships across channels
   jobScheduler.register({
-    name: 'proactive-outreach',
-    description: 'Proactive outreach',
+    name: 'relationship-orchestrator',
+    description: 'Relationship orchestrator',
     interval: { value: 20, unit: 'minutes' },
     initialDelay: { value: 2, unit: 'minutes' },
-    runner: runOutreachScheduler,
-    options: { limit: 8 },
+    runner: runRelationshipOrchestratorCycle,
+    options: { limit: 25 },
   });
 
   // Account enrichment - enriches accounts via Lusha API
@@ -132,27 +146,6 @@ export function registerAllJobs(): void {
     shouldLogResult: (r) => r.enriched > 0 || r.failed > 0,
   });
 
-  // Moltbook poster - posts articles to Moltbook
-  jobScheduler.register({
-    name: 'moltbook-poster',
-    description: 'Moltbook poster',
-    interval: { value: 2, unit: 'hours' },
-    initialDelay: { value: 10, unit: 'minutes' },
-    runner: runMoltbookPosterJob,
-    options: { limit: 1 },
-    shouldLogResult: (r) => r.postsCreated > 0,
-  });
-
-  // Moltbook engagement - engages with Moltbook discussions and checks DMs
-  jobScheduler.register({
-    name: 'moltbook-engagement',
-    description: 'Moltbook engagement',
-    interval: { value: 4, unit: 'hours' },
-    initialDelay: { value: 10, unit: 'minutes' },
-    runner: runMoltbookEngagementJob,
-    options: { limit: 5 },
-    shouldLogResult: (r) => r.commentsCreated > 0 || r.interestingThreads > 0 || r.dmsHandled > 0,
-  });
 
   // Content curator - processes external content for knowledge base
   jobScheduler.register({
@@ -198,26 +191,7 @@ export function registerAllJobs(): void {
     shouldLogResult: (r) => r.remindersSent > 0,
   });
 
-  // Engagement scoring - updates engagement scores
-  jobScheduler.register({
-    name: 'engagement-scoring',
-    description: 'Engagement scoring',
-    interval: { value: 1, unit: 'hours' },
-    initialDelay: { value: 10, unit: 'seconds' },
-    runner: runEngagementScoringJob,
-    shouldLogResult: (r) => r.usersUpdated > 0 || r.orgsUpdated > 0,
-  });
-
-  // Goal follow-up - sends follow-up messages during business hours
-  jobScheduler.register({
-    name: 'goal-follow-up',
-    description: 'Goal follow-up',
-    interval: { value: 4, unit: 'hours' },
-    initialDelay: { value: 3, unit: 'minutes' },
-    runner: runGoalFollowUpJob,
-    businessHours: { startHour: 9, endHour: 18, skipWeekends: true },
-    shouldLogResult: (r) => r.followUpsSent > 0 || r.goalsReconciled > 0,
-  });
+  // Engagement scoring job removed — old scoring replaced by person_relationships/person_events
 
   // Persona inference - infers personas from signals for unclassified orgs
   jobScheduler.register({
@@ -285,6 +259,37 @@ export function registerAllJobs(): void {
     shouldLogResult: (r) => r.generated || r.sent > 0,
   });
 
+  // WG digest - biweekly per-group email to working group members
+  jobScheduler.register({
+    name: 'wg-digest',
+    description: 'Biweekly working group digest emails',
+    interval: { value: 1, unit: 'hours' },
+    initialDelay: { value: 9, unit: 'minutes' },
+    runner: runWgDigestJob,
+    shouldLogResult: (r) => r.groupsChecked > 0,
+  });
+
+  // WG digest prep - Monday nudge to leaders about content gaps before Wednesday digest
+  jobScheduler.register({
+    name: 'wg-digest-prep',
+    description: 'Prep emails to WG leaders before biweekly digest',
+    interval: { value: 1, unit: 'hours' },
+    initialDelay: { value: 10, unit: 'minutes' },
+    runner: runWgDigestPrepJob,
+    shouldLogResult: (r) => r.emailsSent > 0,
+  });
+
+  // Credential digest - weekly summary of certification awards to Slack
+  jobScheduler.register({
+    name: 'credential-digest',
+    description: 'Weekly credential award digest',
+    interval: { value: 168, unit: 'hours' },
+    initialDelay: { value: 8, unit: 'minutes' },
+    runner: runCredentialDigestJob,
+    businessHours: { startHour: 9, endHour: 11, skipWeekends: true },
+    shouldLogResult: (r) => r.posted || r.awardsFound > 0,
+  });
+
   // Social post ideas - generates social copy for members to share
   jobScheduler.register({
     name: 'social-post-ideas',
@@ -293,6 +298,16 @@ export function registerAllJobs(): void {
     initialDelay: { value: 7, unit: 'minutes' },
     runner: runSocialPostIdeasJob,
     shouldLogResult: (r) => r.posted || r.skipped,
+  });
+
+  // Conversation insights - weekly analysis of Addie conversations
+  jobScheduler.register({
+    name: 'conversation-insights',
+    description: 'Weekly conversation insights analysis',
+    interval: { value: 1, unit: 'hours' },
+    initialDelay: { value: 8, unit: 'minutes' },
+    runner: runConversationInsightsJob,
+    shouldLogResult: (r) => r.generated || r.posted,
   });
 
   jobScheduler.register({
@@ -320,7 +335,6 @@ export function registerAllJobs(): void {
     interval: { value: 168, unit: 'hours' },
     initialDelay: { value: 15, unit: 'minutes' },
     runner: runGeoMonitorJob,
-    options: { limit: 15 },
     shouldLogResult: (r) => r.promptsChecked > 0,
   });
 
@@ -343,6 +357,17 @@ export function registerAllJobs(): void {
     runner: runGeoContentPlannerJob,
     options: { limit: 10 },
     shouldLogResult: (r) => r.briefsCreated > 0,
+  });
+
+  // Compliance heartbeat - runs comply() against registered agents
+  jobScheduler.register({
+    name: 'compliance-heartbeat',
+    description: 'Agent compliance heartbeat',
+    interval: { value: 1, unit: 'hours' },
+    initialDelay: { value: 10, unit: 'minutes' },
+    runner: runComplianceHeartbeatJob,
+    options: { limit: 10 },
+    shouldLogResult: (r) => r.checked > 0,
   });
 
   // Event reminder - sends notifications ~24h before events start
@@ -394,25 +419,27 @@ export function registerAllJobs(): void {
 export const JOB_NAMES = {
   DOCUMENT_INDEXER: 'document-indexer',
   SUMMARY_GENERATOR: 'summary-generator',
-  PROACTIVE_OUTREACH: 'proactive-outreach',
+  RELATIONSHIP_ORCHESTRATOR: 'relationship-orchestrator',
   ACCOUNT_ENRICHMENT: 'account-enrichment',
-  MOLTBOOK_POSTER: 'moltbook-poster',
-  MOLTBOOK_ENGAGEMENT: 'moltbook-engagement',
   CONTENT_CURATOR: 'content-curator',
   FEED_FETCHER: 'feed-fetcher',
   ALERT_PROCESSOR: 'alert-processor',
   TASK_REMINDER: 'task-reminder',
   ENGAGEMENT_SCORING: 'engagement-scoring',
-  GOAL_FOLLOW_UP: 'goal-follow-up',
   PERSONA_INFERENCE: 'persona-inference',
   JOURNEY_COMPUTATION: 'journey-computation',
   KNOWLEDGE_STALENESS: 'knowledge-staleness',
   PROSPECT_TRIAGE: 'prospect-triage',
   PROSPECT_ESCALATION: 'prospect-escalation',
   WEEKLY_DIGEST: 'weekly-digest',
+  WG_DIGEST: 'wg-digest',
+  WG_DIGEST_PREP: 'wg-digest-prep',
+  CREDENTIAL_DIGEST: 'credential-digest',
   SOCIAL_POST_IDEAS: 'social-post-ideas',
+  CONVERSATION_INSIGHTS: 'conversation-insights',
   SLACK_AUTO_LINK: 'slack-auto-link',
   DOMAIN_MEMBER_BACKFILL: 'domain-member-backfill',
+  COMPLIANCE_HEARTBEAT: 'compliance-heartbeat',
   EVENT_REMINDER: 'event-reminder',
   GEO_MONITOR: 'geo-monitor',
   GEO_SNAPSHOT: 'geo-snapshot',

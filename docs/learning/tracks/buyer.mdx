@@ -1,7 +1,8 @@
 ---
 title: "Buyer / brand track"
 sidebarTitle: Buyer track
-description: Orchestrate multi-agent buying workflows. Brand identity protocols, creative workflows, sponsored intelligence, and a build project.
+description: "AdCP buyer track (C1-C4): multi-agent buying orchestration, brand identity protocols, creative workflows, sponsored intelligence, and a buyer agent build project."
+"og:title": "AdCP — Buyer / brand track"
 ---
 
 # Buyer / brand track (C1–C4)
@@ -43,16 +44,21 @@ How buyer agents orchestrate across multiple sales agents simultaneously: discov
   <Card title="Targeting" icon="crosshairs" href="/docs/media-buy/advanced-topics/targeting">
     Targeting options, audience overlays, and geo-targeting.
   </Card>
+  <Card title="get_media_buys task" icon="list-check" href="/docs/media-buy/task-reference/get_media_buys">
+    Operational monitoring: lifecycle state, creative approvals, valid actions, delivery snapshots.
+  </Card>
 </CardGroup>
 
 ### Key concepts
 
 - **Multi-agent buying** — query multiple sellers in parallel, compare, allocate, execute
 - **Orchestration pattern** — discover, evaluate, allocate, execute, monitor
+- **Order lifecycle** — `confirmed_at` on creation, pause/resume, cancellation via `update_media_buy`, terminal states
+- **Valid actions** — `get_media_buys` returns `valid_actions` so agents know what operations are permitted
 - **Audience targeting** — `sync_audiences` for custom segments
 - **Account setup** — `sync_accounts` to establish billing before buying
 
-<Card title="Start C1 with Addie" icon="play" href="https://agenticadvertising.org/addie">
+<Card title="Start C1 with Addie" icon="play" href="https://agenticadvertising.org/chat">
   "I'd like to start certification module C1."
 </Card>
 
@@ -72,6 +78,21 @@ The Brand Protocol (`brand.json`), content standards, and how brand agents enfor
   </Card>
   <Card title="brand.json specification" icon="file-code" href="/docs/brand-protocol/brand-json">
     The brand.json format: identity, logos, colors, guidelines, and agent declarations.
+  </Card>
+  <Card title="For advertisers" icon="bullhorn" href="/docs/brand-protocol/for-advertisers">
+    How advertisers license talent rights through the brand protocol — pricing, scopes, and what you get.
+  </Card>
+  <Card title="get_rights task" icon="key" href="/docs/brand-protocol/tasks/get_rights">
+    Search for licensable talent rights — pricing, availability, and exclusion filtering.
+  </Card>
+  <Card title="acquire_rights task" icon="handshake" href="/docs/brand-protocol/tasks/acquire_rights">
+    License talent rights: generation credentials, rights constraints, revocation, and approval workflows.
+  </Card>
+  <Card title="update_rights task" icon="rotate" href="/docs/brand-protocol/tasks/update_rights">
+    Extend, adjust, or pause an existing rights grant.
+  </Card>
+  <Card title="For rights holders" icon="shield" href="/docs/brand-protocol/for-rights-holders">
+    How rights holders monetize talent through the brand protocol.
   </Card>
   <Card title="Content standards" icon="scale-balanced" href="/docs/governance/content-standards/index">
     How content standards define what's appropriate, how calibration works, and local execution.
@@ -95,15 +116,17 @@ The Brand Protocol (`brand.json`), content standards, and how brand agents enfor
 
 ### Key concepts
 
-- **Brand identity protocol** — `brand.json` at `/.well-known/adcp/brand.json` declares brand identity
+- **Brand identity protocol** — `brand.json` at `/.well-known/brand.json` declares brand identity
 - **Content standards** — automated compliance checking via MCP-based brand agents
 - **The Oracle model** — using AI to evaluate brand safety at scale
 - **Supply chain preferences** — suitability, safety, and sustainability requirements
 - **Campaign governance** — campaign plans define authorized parameters; `check_governance` validates every transaction before execution
 - **Policy registry** — shared compliance policies (regulations and standards) referenced by ID, not written per-brand
 - **Governance modes** — audit, advisory, enforce — a deployment path from learning to production
+- **Policy categories** — regulatory regimes (`children_directed`, `fair_housing`, `fair_lending`) that plans declare and governance agents enforce
+- **Restricted attributes** — personal data categories (`health_data`, `racial_ethnic_origin`) that must not be used for targeting under applicable policies
 
-<Card title="Start C2 with Addie" icon="play" href="https://agenticadvertising.org/addie">
+<Card title="Start C2 with Addie" icon="play" href="https://agenticadvertising.org/chat">
   "I'd like to start certification module C2."
 </Card>
 
@@ -127,7 +150,7 @@ How creative assets flow through AdCP: `build_creative`, `preview_creative`, `sy
   <Card title="preview_creative task" icon="eye" href="/docs/creative/task-reference/preview_creative">
     Previewing creatives before deployment.
   </Card>
-  <Card title="sync_creatives task" icon="rotate" href="/docs/media-buy/task-reference/sync_creatives">
+  <Card title="sync_creatives task" icon="rotate" href="/docs/creative/task-reference/sync_creatives">
     Synchronizing creative assets with publisher platforms.
   </Card>
   <Card title="Generative creative" icon="wand-magic-sparkles" href="/docs/creative/generative-creative">
@@ -143,11 +166,12 @@ How creative assets flow through AdCP: `build_creative`, `preview_creative`, `sy
 
 ### Key concepts
 
-- **Creative lifecycle** — `build_creative`, `preview_creative`, `sync_creatives`
-- **Cross-platform adaptation** — creative agents adapt assets across display, video, audio, native formats
+- **Creative lifecycle** — `build_creative`, `preview_creative`, `sync_creatives` — callable on any agent implementing the Creative Protocol, including sales agents
+- **Cross-platform adaptation** — agents adapt assets across display, video, audio, native formats
+- **Seller-side generation** — sales agents can generate creatives at serve time from a brief provided in the media buy
 - **Sponsored Intelligence** — brands participate in conversational AI with transparency and user control
 
-<Card title="Start C3 with Addie" icon="play" href="https://agenticadvertising.org/addie">
+<Card title="Start C3 with Addie" icon="play" href="https://agenticadvertising.org/chat">
   "I'd like to start certification module C3."
 </Card>
 
@@ -181,7 +205,7 @@ Passing threshold: 70%.
 
 Any AI coding assistant is welcome. The build must demonstrate cross-role interaction.
 
-<Card title="Start C4 with Addie" icon="play" href="https://agenticadvertising.org/addie">
+<Card title="Start C4 with Addie" icon="play" href="https://agenticadvertising.org/chat">
   "I'd like to start certification module C4."
 </Card>
 

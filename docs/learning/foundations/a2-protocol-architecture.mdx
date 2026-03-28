@@ -1,7 +1,8 @@
 ---
 title: "A2: Your first media buy"
 sidebarTitle: "A2: Your first media buy"
-description: Step by step through the full AdCP lifecycle — discovery, purchase, creative, delivery — against a live sandbox agent.
+description: "Module A2: Execute your first AdCP media buy. Free 20-minute hands-on module walking through discovery, purchase, creative sync, and delivery with a live sandbox agent."
+"og:title": "AdCP — A2: Your first media buy"
 ---
 
 # A2: Your first media buy
@@ -44,10 +45,10 @@ description: Step by step through the full AdCP lifecycle — discovery, purchas
 
 | Term | Definition |
 |------|-----------|
-| **Sales agent** | Represents a publisher and exposes inventory via `get_products` |
+| **Sales agent** | Represents a publisher and exposes inventory via `get_products`. May also implement the Creative Protocol to handle creatives from the same endpoint. |
 | **Buyer agent** | Represents a brand or agency and purchases media via `create_media_buy` |
 | **Brand agent** | Manages brand identity and guidelines via `brand.json` |
-| **Creative agent** | Produces and adapts advertising assets via `build_creative` |
+| **Creative agent** | Any agent implementing the Creative Protocol — produces and adapts advertising assets via `build_creative`. This can be a standalone service or a sales agent that declares `"creative"` in `supported_protocols`. |
 | **Signals agent** | Provides measurement and audience data via `get_signals` |
 | **adagents.json** | Publisher-hosted file declaring agent capabilities (like robots.txt for agents) |
 | **Tool discovery** | The process of an agent reading another agent's capabilities to know what tasks it supports |
@@ -57,9 +58,10 @@ description: Step by step through the full AdCP lifecycle — discovery, purchas
 Tell Addie what you want: audience, goals, budget. Then walk through each step as it happens:
 
 1. **Discovery** — `get_products` against `@cptestagent`, examine real response structure
-2. **Purchase** — `create_media_buy` with targeting and budget
+2. **Purchase** — `create_media_buy` with targeting and budget. Note the `confirmed_at` timestamp in the response — this is the seller's order confirmation.
 3. **Creative** — `sync_creatives` to deliver assets to the publisher
-4. **Delivery** — `get_media_buy_delivery` to see results
+4. **Status check** — `get_media_buys` to see lifecycle state, creative approvals, and `valid_actions`
+5. **Delivery** — `get_media_buy_delivery` to see results
 
 You'll see the actual protocol messages at each stage. By the end, you've bought media through an agent.
 
@@ -76,7 +78,7 @@ Passing threshold: 70%.
 
 ## Start this module
 
-<Card title="Start A2 with Addie" icon="play" href="https://agenticadvertising.org/addie">
+<Card title="Start A2 with Addie" icon="play" href="https://agenticadvertising.org/chat">
   Open Addie and say "I'd like to start certification module A2."
 </Card>
 

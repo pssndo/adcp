@@ -1,5 +1,7 @@
 ---
 title: Glossary
+description: "AdCP glossary: definitions of agents, accounts, audiences, signals, governance, media buys, creatives, and other Ad Context Protocol terms."
+"og:title": "AdCP — Glossary"
 ---
 
 
@@ -16,6 +18,12 @@ A named group of users uploaded by a buyer for targeted advertising. Distinct fr
 
 **Audience Member**
 A hashed identifier record representing one person in a CRM audience. Contains at least one of: `hashed_email`, `hashed_phone`, or `uids`. All PII is normalized and hashed (SHA-256) by the buyer before transmission — the protocol never carries cleartext personal data. Providing multiple identifiers for the same person improves match rates. See [Hashed Identifier](#hashed-identifier) and [UID](#uid-universal-id).
+
+**Audience Constraints**
+Plan-level include/exclude rules that structurally prevent prohibited targeting patterns. Each constraint is an [Audience Selector](#audience-selector). The governance agent evaluates `check_governance` requests against these constraints to detect prohibited targeting before any ad is served.
+
+**Audience Selector**
+A discriminated union describing one targeting criterion — either a signal reference (pointing to a specific data provider signal) or a natural language description. Audience selectors appear in plan audience constraints and `planned_delivery.audience_targeting`.
 
 **Action Source**
 Where an event physically occurred: `website`, `app`, `in_store`, `phone_call`, `chat`, `email`, `offline`, `system_generated`, or `other`. Set on each event in `log_event` and declared at the product level in `conversion_tracking.action_sources`.
@@ -44,6 +52,9 @@ The authenticated entity making API calls—may be a brand's internal team, an a
 Total monetary allocation for a media buy, which can be distributed across multiple packages.
 
 ## C
+
+**Context Match**
+TMP operation that evaluates available packages against content context. Contains artifact IDs, context signals (topics, sentiment, keywords, embedding), and available packages. Carries no user identity. See [Trusted Match Protocol](/docs/trusted-match).
 
 **Conversion Tracking**
 The mechanism for sending buyer-side marketing events to a seller for attribution. Involves two steps: configure event sources on the seller account (`sync_event_sources`), then send events (`log_event`). Seller-level capabilities (supported event types, UID types, attribution windows) are declared in `get_adcp_capabilities`; product-level support is declared in `product.conversion_tracking`. See also [Event](#event) and [Optimization Goal](#optimization-goal).
@@ -144,6 +155,9 @@ Protocol feature allowing publishers to require manual approval for operations.
 
 ## I
 
+**Identity Match**
+TMP operation that evaluates user eligibility against package criteria using an opaque user token. Returns a boolean `eligible` flag and optional `intent_score` per package. Carries no page context. The buyer computes eligibility from frequency caps, audience membership, and other signals; the reasons are opaque to the publisher. See [Trusted Match Protocol](/docs/trusted-match).
+
 **Impressions** (Media Buy Protocol)
 The number of times an ad is displayed, used for pricing and delivery tracking.
 
@@ -182,6 +196,9 @@ The AI capability that allows audience discovery through conversational descript
 
 ## O
 
+**Offer** (TMP)
+A buyer's response to a TMP context match request. Ranges from simple activation (`package_id` only, for GAM key-value targeting) to rich proposals with brand, price, summary, and inline creative manifest (for AI assistants and dynamic surfaces). See [TMP Specification](/docs/trusted-match/specification).
+
 **Optimization Goal**
 A single entry in a package's `optimization_goals` array. Two kinds: `kind: "event"` (optimize for advertiser-tracked conversion events via an `event_sources` array of source-type pairs, with optional `cost_per`, `per_ad_spend`, or `maximize_value` target) and `kind: "metric"` (optimize for a seller-native delivery metric — clicks, views, completed views, engagements, attention, etc. — with optional `cost_per` or `threshold_rate` target). Event goals with `per_ad_spend` or `maximize_value` targets require `value_field` on event source entries. When the seller supports `multi_source_event_dedup` (declared in `get_adcp_capabilities`), they deduplicate by `event_id` across sources; otherwise buyers should use a single event source per goal. When multiple goals are present, `priority` (1 = highest) controls which the seller treats as primary.
 
@@ -195,6 +212,9 @@ A specific advertising product within a media buy, representing a flight or line
 
 **Platform Account**
 Master account representing an advertising platform that can syndicate signals to multiple customers.
+
+**Policy Category**
+A regulatory regime that applies to a campaign plan (e.g., `children_directed`, `fair_housing`, `fair_lending`, `fair_employment`). Each policy category defines `restricted_attributes` — personal data types that must not be used for targeting when that category applies. Governance agents resolve policy categories from both the plan and the brand's compliance configuration.
 
 **Pricing Model**
 The method by which advertising inventory is priced and billed. AdCP supports CPM, CPC, CPCV, CPV, CPA, CPL, CPP, and flat rate models.
@@ -223,6 +243,9 @@ Milestones in video ad viewing: Q1 (25% viewed), Q2 (50% viewed), Q3 (75% viewed
 
 **Reach**
 The number or percentage of unique individuals exposed to an advertisement at least once during a campaign.
+
+**Restricted Attribute**
+A personal data category (e.g., `health_data`, `racial_ethnic_origin`) that must not be used for targeting under one or more policy categories. Restricted attributes are defined at the registry level (GDPR Article 9 categories) and self-declared on signal definitions. Governance agents match restricted attributes structurally — if a signal carries a restricted attribute that a plan's policy categories prohibit, targeting with that signal is denied.
 
 **Relevance Score**
 Numerical rating (0-1) indicating how well a signal matches the discovery prompt.
@@ -284,7 +307,7 @@ The data type of a signal's values: `binary` (user matches or doesn't), `categor
 The measurement type for signal size: individuals, devices, or households.
 
 **Sponsored Intelligence (SI)**
-An open standard for conversational brand experiences in AI assistants. Like VAST defines video ad serving, SI defines how to serve and interact with brand agent endpoints. SI handles the engagement; the Agentic Commerce Protocol (ACP) handles transactions. See [Sponsored Intelligence Protocol](/docs/sponsored-intelligence/overview) for details.
+An open standard for conversational brand experiences in AI assistants. Like VAST defines video ad serving, SI defines how to serve and interact with brand agent endpoints. SI handles the engagement; the Agentic Commerce Protocol (ACP) handles transactions. See [SI Chat Protocol](/docs/sponsored-intelligence/si-chat-protocol) for details.
 
 **SSP (Supply-Side Platform)**
 A type of decisioning platform that helps publishers sell advertising inventory programmatically. SSPs connect to multiple demand sources and make ad selection decisions. Examples: Index Exchange, OpenX, PubMatic, Magnite.
@@ -299,6 +322,12 @@ Signal data licensed from external providers, also known as marketplace signals.
 
 **Time-Based Pricing**
 Pricing structure based on duration (hourly, daily, or daypart) rather than impressions. Common in DOOH advertising using flat_rate model.
+
+**TMP Router**
+Infrastructure that fans out TMP requests to buyer agents and merges responses. A single binary with structurally separate code paths for context and identity. The router enriches requests (adding property registry IDs, signing), enforces privacy constraints (rejecting requests with identity data in the context path), and applies adaptive timeouts. See [Router Architecture](/docs/trusted-match/router-architecture).
+
+**Trusted Match Protocol (TMP)**
+AdCP's real-time execution layer. Determines which pre-negotiated packages should activate for a given impression using two structurally separated operations: Context Match (content fit, no user identity) and Identity Match (user eligibility, no page context). The publisher joins both responses locally. Works across web, mobile, CTV, AI assistants, and retail media. Replaces AXE. See [Trusted Match Protocol](/docs/trusted-match).
 
 ## U
 
@@ -340,6 +369,7 @@ Named collection of DOOH screens across specific venues (e.g., 'times_square_net
 - **RTB**: Real-Time Bidding
 - **SI**: Sponsored Intelligence
 - **SSP**: Supply-Side Platform
+- **TMP**: Trusted Match Protocol
 - **TTD**: The Trade Desk
 - **UCP**: Universal Commerce Protocol
 - **UID**: Universal Identifier

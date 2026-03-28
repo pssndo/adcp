@@ -51,6 +51,10 @@
     "delivery_type": {
       "$ref": "/schemas/enums/delivery-type.json"
     },
+    "exclusivity": {
+      "$ref": "/schemas/enums/exclusivity.json",
+      "description": "Whether this product offers exclusive access to its inventory. Defaults to 'none' when absent. Most relevant for guaranteed products tied to specific collections or placements."
+    },
     "pricing_options": {
       "type": "array",
       "description": "Available pricing models for this product",
@@ -165,6 +169,10 @@
       "minimum": 1,
       "description": "Maximum number of optimization_goals this product accepts on a package. When absent, no limit is declared. Most social platforms accept only 1 goal — buyers sending arrays longer than this value should expect the seller to use only the highest-priority (lowest priority number) goal."
     },
+    "measurement_readiness": {
+      "$ref": "/schemas/core/measurement-readiness.json",
+      "description": "Assessment of whether the buyer's event source setup is sufficient for this product to optimize effectively. Only present when the seller can evaluate the buyer's account context. Buyers should check this before creating media buys with event-based optimization goals."
+    },
     "conversion_tracking": {
       "type": "object",
       "description": "Conversion event tracking for this product. Presence indicates the product supports optimization_goals with kind: 'event'. Seller-level capabilities (supported event types, UID types, attribution windows) are declared in get_adcp_capabilities.",
@@ -236,7 +244,7 @@
     "expires_at": {
       "type": "string",
       "format": "date-time",
-      "description": "Expiration timestamp for custom products"
+      "description": "Expiration timestamp. After this time, the product may no longer be available for purchase and create_media_buy may reject packages referencing it."
     },
     "product_card": {
       "type": "object",
@@ -278,12 +286,91 @@
       ],
       "additionalProperties": true
     },
+    "collections": {
+      "type": "array",
+      "description": "Collections available in this product. Each entry references collections declared in an adagents.json by domain and collection ID. Buyers resolve full collection objects from the referenced adagents.json.",
+      "items": {
+        "$ref": "/schemas/core/collection-selector.json"
+      },
+      "minItems": 1
+    },
+    "collection_targeting_allowed": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether buyers can target a subset of this product's collections. When false (default), the product is a bundle — buyers get all listed collections. When true, buyers can select specific collections in the media buy."
+    },
+    "installments": {
+      "type": "array",
+      "description": "Specific installments included in this product. Each installment references its parent collection via collection_id when the product spans multiple collections. When absent with collections present, the product covers the collections broadly (run-of-collection).",
+      "items": {
+        "$ref": "/schemas/core/installment.json"
+      }
+    },
     "enforced_policies": {
       "type": "array",
       "description": "Registry policy IDs the seller enforces for this product. Enforcement level comes from the policy registry. Buyers can filter products by required policies.",
       "items": {
         "type": "string"
       }
+    },
+    "trusted_match": {
+      "type": "object",
+      "description": "Trusted Match Protocol capabilities for this product. When present, the product supports real-time contextual and/or identity matching via TMP. Buyers use this to determine what response types the publisher can accept and whether brands can be selected dynamically at match time.",
+      "properties": {
+        "context_match": {
+          "type": "boolean",
+          "description": "Whether this product supports Context Match requests. When true, the publisher's TMP router will send context match requests to registered providers for this product's inventory.",
+          "default": true
+        },
+        "identity_match": {
+          "type": "boolean",
+          "description": "Whether this product supports Identity Match requests. When true, the publisher's TMP router will send identity match requests to evaluate user eligibility.",
+          "default": false
+        },
+        "response_types": {
+          "type": "array",
+          "description": "What the publisher can accept back from context match.",
+          "items": {
+            "$ref": "/schemas/enums/response-type.json"
+          },
+          "minItems": 1,
+          "default": ["activation"]
+        },
+        "dynamic_brands": {
+          "type": "boolean",
+          "description": "Whether the buyer can select a brand at match time. When false (default), the brand must be specified on the media buy/package. When true, the buyer's offer can include any brand — the publisher applies approval rules at match time. Enables multi-brand agreements where the holding company or buyer agent selects brand based on context.",
+          "default": false
+        }
+      },
+      "required": ["context_match"],
+      "additionalProperties": true
+    },
+    "material_submission": {
+      "type": "object",
+      "description": "Instructions for submitting physical creative materials (print, static OOH, cinema). Present only for products requiring physical delivery outside the digital creative assignment flow. Buyer agents MUST validate url and email domains against the seller's known domains (from adagents.json) before submitting materials. Never auto-submit without human confirmation.",
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://",
+          "description": "HTTPS URL for uploading or submitting physical creative materials"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Email address for creative material submission"
+        },
+        "instructions": {
+          "type": "string",
+          "description": "Human-readable instructions for material submission (file naming conventions, shipping address, etc.)",
+          "maxLength": 2000
+        },
+        "ext": {
+          "$ref": "/schemas/core/ext.json"
+        }
+      },
+      "minProperties": 1,
+      "additionalProperties": true
     },
     "ext": {
       "$ref": "/schemas/core/ext.json"

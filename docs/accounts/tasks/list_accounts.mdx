@@ -1,5 +1,7 @@
 ---
 title: list_accounts
+description: "list_accounts returns all advertiser accounts an authenticated agent can operate on an AdCP vendor agent. Works across media buy, signals, governance, and creative protocols."
+"og:title": "AdCP — list_accounts"
 testable: false
 ---
 
@@ -87,6 +89,7 @@ All parameters are optional. An empty request returns all accounts.
 | `billing` | Billing model in effect: `operator` or `agent` |
 | `account_scope` | How the seller scoped this account: `operator`, `brand`, `operator_brand`, or `agent`. See [account scope](/docs/building/integration/accounts-and-agents#account-scope). |
 | `payment_terms` | Payment terms agreed for this account: `net_15`, `net_30`, `net_45`, `net_60`, `net_90`, or `prepay`. Binding for all invoices when the account is active. |
+| `governance_agents` | Governance agent endpoints registered on this account. Present when governance agents have been configured via [`sync_governance`](/docs/accounts/tasks/sync_governance). |
 | `setup` | Present when `status: "pending_approval"`. Contains `url` for completing setup and `message` explaining what's needed. |
 
 ## Common Scenarios
@@ -207,5 +210,6 @@ asyncio.run(main())
 ## Next Steps
 
 - [sync_accounts](/docs/accounts/tasks/sync_accounts) — Sync advertiser accounts with a seller
+- [sync_governance](/docs/accounts/tasks/sync_governance) — Sync governance agents to accounts
 - [Accounts and agents](/docs/building/integration/accounts-and-agents) — Billing models, trust models, and authorized operators
 - [Brand protocol](/docs/brand-protocol/brand-json) — How vendor agents resolve brand identity from the brand's `domain`

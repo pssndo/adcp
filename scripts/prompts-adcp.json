@@ -1,0 +1,27 @@
+[
+  {
+    "filename": "images/walkthrough/adcp-01-fragmentation.png",
+    "prompt": "Alex (Black woman, early 40s, medium-length locs pulled back, tortoiseshell reading glasses pushed up on her head, clean-shaven, wearing a structured charcoal blazer over a simple white top) stands in a war room surrounded by chaos — a wall of mismatched screens showing different platform dashboards, tangled cables, printouts taped to the wall, sticky notes everywhere. She has her arms crossed and one eyebrow raised, surveying the mess. Her team is visible in the background — two people hunched over laptops looking stressed. Alex's expression says she's done tolerating this. Late afternoon light, the room feels cramped and overloaded. Do not include any text, words, or labels in the image.",
+    "alt_text": "Alex stands arms crossed in a war room of mismatched screens and tangled cables, surveying the chaos — her team hunched over laptops in the background"
+  },
+  {
+    "filename": "images/walkthrough/adcp-02-one-protocol.png",
+    "prompt": "Alex (Black woman, early 40s, medium-length locs pulled back, tortoiseshell reading glasses now on her face, charcoal blazer over white top) sits in a quiet conference room, reading on her iPad. The iPad screen emits a soft teal glow. Around her, the chaos from the previous scene is gone — the room is clean, bright, minimal. Through the glass conference room wall, you can see the messy war room from panel 1 in the distance, but Alex has stepped away from it. She's discovering something. Her expression is focused and intrigued — leaning forward slightly, glasses on, engaged. Do not include any text, words, or labels in the image.",
+    "alt_text": "Alex reads on her iPad in a quiet conference room, glasses on, leaning forward intrigued — through the glass wall, the chaotic war room is visible in the distance"
+  },
+  {
+    "filename": "images/walkthrough/adcp-03-agents.png",
+    "prompt": "Alex (Black woman, early 40s, locs pulled back, tortoiseshell glasses pushed up on head again, charcoal blazer) stands at a whiteboard in a bright meeting room, presenting to her team of three people seated around a table. On the whiteboard behind her, a simple hub-and-spoke diagram shows one central circle connected to six smaller circles. Alex gestures at it confidently. Her team looks engaged — one person on a laptop, one with a notebook, one leaning back thinking. The energy in the room is optimistic. This is Alex selling the vision to her people. Do not include any text, words, or labels in the image.",
+    "alt_text": "Alex presents a hub-and-spoke diagram to her team in a bright meeting room — one person on laptop, one with notebook, one leaning back thinking, the energy optimistic"
+  },
+  {
+    "filename": "images/walkthrough/adcp-04-workflow.png",
+    "prompt": "Alex (Black woman, early 40s, locs pulled back, tortoiseshell glasses on head, charcoal blazer) watches over Sam's shoulder (Black man, early 30s, dark skin, sharp fade, no glasses, clean-shaven, light blue button-down, rolled sleeves, silver watch) as he works at a single clean screen. The screen shows a unified dashboard with teal-colored data flowing smoothly. Alex has a hand on the back of Sam's chair, a slight proud smile — her team is working the new way. Through a large window, a city skyline is visible with tiny ads on billboards and screens, suggesting the campaigns are live. One screen instead of twelve. Do not include any text, words, or labels in the image.",
+    "alt_text": "Alex watches over Sam's shoulder as he works at a single clean screen with unified data — through the window, a city skyline shows campaigns running live"
+  },
+  {
+    "filename": "images/walkthrough/adcp-05-governance.png",
+    "prompt": "Alex (Black woman, early 40s, locs pulled back, tortoiseshell glasses on head, charcoal blazer) and Jordan (Latina woman, mid-30s, warm brown skin, dark wavy hair past shoulders, silver hoop earrings, sage-green cardigan) stand together looking at a large wall display showing a campaign audit timeline — glowing nodes in a horizontal line with green and amber indicators. Alex has her arms folded with a satisfied expression. Jordan points at one of the nodes, explaining something. They're reviewing together — the leader and the governance expert, humans in control. The display is clean and organized. Bright, confident, professional atmosphere. Do not include any text, words, or labels in the image.",
+    "alt_text": "Alex and Jordan stand together reviewing a campaign audit timeline on a wall display — Alex arms folded and satisfied, Jordan pointing at a node and explaining"
+  }
+]

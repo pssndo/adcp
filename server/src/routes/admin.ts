@@ -9,15 +9,15 @@ import { Router } from "express";
 import { WorkOS } from "@workos-inc/node";
 import { getPool } from "../db/client.js";
 import { createLogger } from "../logger.js";
-import { requireAuth, requireAdmin, requireManage } from "../middleware/auth.js";
+import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import { serveHtmlWithConfig } from "../utils/html-config.js";
 import { getMemberContext, getWebMemberContext } from "../addie/member-context.js";
 import { getMemberCapabilities } from "../db/outbound-db.js";
-import { getOutboundPlanner } from "../addie/services/outbound-planner.js";
-import * as outboundDb from "../db/outbound-db.js";
-import { canContactUser } from "../addie/services/proactive-outreach.js";
-import { InsightsDatabase } from "../db/insights-db.js";
-import type { PlannerContext, MemberCapabilities } from "../addie/types.js";
+import { canEngageSlackUser } from "../addie/services/relationship-orchestrator.js";
+import { computeEngagementOpportunities } from "../addie/services/engagement-planner.js";
+import type { MemberCapabilities } from "../addie/types.js";
+import * as relationshipDb from "../db/relationship-db.js";
+import { loadRelationshipContext } from "../addie/services/relationship-context.js";
 
 // Import route modules
 import { setupProspectRoutes } from "./admin/prospects.js";
@@ -33,6 +33,7 @@ import { setupBrandEnrichmentRoutes } from "./admin/brand-enrichment.js";
 import { setupBanRoutes } from "./admin/bans.js";
 import { setupGeoRoutes } from "./admin/geo.js";
 import { setupRelationshipRoutes } from "./admin/relationships.js";
+import { setupSimulationRoutes } from "./admin/simulations.js";
 
 const logger = createLogger("admin-routes");
 
@@ -62,10 +63,6 @@ export function createAdminRouter(): { pageRouter: Router; apiRouter: Router } {
   // ADMIN PAGE ROUTES (mounted at /admin)
   // =========================================================================
 
-  pageRouter.get("/prospects", (req, res) => {
-    res.redirect(301, "/manage/prospects");
-  });
-
   pageRouter.get("/api-keys", requireAuth, requireAdmin, (req, res) => {
     serveHtmlWithConfig(req, res, "admin-api-keys.html").catch((err) => {
       logger.error({ err }, "Error serving admin API keys page");
@@ -90,6 +87,13 @@ export function createAdminRouter(): { pageRouter: Router; apiRouter: Router } {
   pageRouter.get("/people", requireAuth, requireAdmin, (req, res) => {
     serveHtmlWithConfig(req, res, "admin-people.html").catch((err) => {
       logger.error({ err }, "Error serving people page");
+      res.status(500).send("Internal server error");
+    });
+  });
+
+  pageRouter.get("/simulations", requireAuth, requireAdmin, (req, res) => {
+    serveHtmlWithConfig(req, res, "admin-simulations.html").catch((err) => {
+      logger.error({ err }, "Error serving simulations page");
       res.status(500).send("Internal server error");
     });
   });
@@ -136,6 +140,9 @@ export function createAdminRouter(): { pageRouter: Router; apiRouter: Router } {
 
   // Relationship and person events routes
   setupRelationshipRoutes(apiRouter);
+
+  // Outreach simulation and assessment routes
+  setupSimulationRoutes(apiRouter);
 
   // =========================================================================
   // USER CONTEXT API (for viewing member context like Addie sees it)
@@ -206,75 +213,37 @@ export function createAdminRouter(): { pageRouter: Router; apiRouter: Router } {
             extendedContext.addie_goal = goalResult.rows[0];
           }
 
-          // Get member insights
-          const insightsQuery = workosUserId
-            ? `SELECT mit.name as type_key, mit.name as type_name, mi.value
-               FROM member_insights mi
-               LEFT JOIN member_insight_types mit ON mit.id = mi.insight_type_id
-               WHERE mi.workos_user_id = $1 AND mi.is_current = TRUE
-               ORDER BY mi.confidence DESC, mi.created_at DESC
-               LIMIT 10`
-            : `SELECT mit.name as type_key, mit.name as type_name, mi.value
-               FROM member_insights mi
-               LEFT JOIN member_insight_types mit ON mit.id = mi.insight_type_id
-               WHERE mi.slack_user_id = $1 AND mi.is_current = TRUE
-               ORDER BY mi.confidence DESC, mi.created_at DESC
-               LIMIT 10`;
-
-          const insightsResult = await pool.query(insightsQuery, [workosUserId || slackUserId]);
-          if (insightsResult.rows.length > 0) {
-            extendedContext.insights = insightsResult.rows;
-          }
-
-          // Get outreach info (if Slack user)
+          // Get relationship info from person_relationships + person_events
           if (slackUserId) {
-            const outreachQuery = `
+            const relationshipQuery = `
               SELECT
-                sm.last_outreach_at,
-                sm.outreach_opt_out,
-                EXTRACT(EPOCH FROM (NOW() - sm.last_outreach_at)) / 86400 as days_since_outreach,
-                (SELECT COUNT(*) FROM member_outreach mo WHERE mo.slack_user_id = sm.slack_user_id) as total_outreach_count,
-                (SELECT COUNT(*) FROM member_outreach mo WHERE mo.slack_user_id = sm.slack_user_id AND mo.user_responded = TRUE) as responses_received
-              FROM slack_user_mappings sm
-              WHERE sm.slack_user_id = $1`;
-            const outreachResult = await pool.query(outreachQuery, [slackUserId]);
-            if (outreachResult.rows.length > 0) {
-              const row = outreachResult.rows[0];
-              (extendedContext as typeof extendedContext & { outreach?: unknown }).outreach = {
-                last_outreach_at: row.last_outreach_at,
-                days_since_outreach: row.days_since_outreach ? Math.floor(row.days_since_outreach) : null,
-                total_outreach_count: parseInt(row.total_outreach_count) || 0,
-                responses_received: parseInt(row.responses_received) || 0,
-                opted_out: row.outreach_opt_out || false,
-              };
-            }
+                pr.id as person_id,
+                pr.stage,
+                pr.interaction_count,
+                pr.unreplied_outreach_count,
+                pr.sentiment_trend,
+                pr.opted_out,
+                pr.last_addie_message_at,
+                pr.last_person_message_at,
+                pr.last_interaction_channel
+              FROM person_relationships pr
+              WHERE pr.slack_user_id = $1`;
+            const relationshipResult = await pool.query(relationshipQuery, [slackUserId]);
+            if (relationshipResult.rows.length > 0) {
+              const row = relationshipResult.rows[0];
+              (extendedContext as typeof extendedContext & { relationship?: unknown }).relationship = row;
 
-            // Get detailed outreach history with goals, responses, and linked threads
-            const outreachHistoryQuery = `
-              SELECT
-                mo.id,
-                mo.sent_at,
-                mo.initial_message,
-                mo.user_responded,
-                mo.response_received_at,
-                mo.response_sentiment,
-                mo.response_intent,
-                mo.response_text,
-                mo.thread_id,
-                mo.dm_channel_id,
-                og.name as goal_name,
-                og.description as goal_question,
-                at.message_count as thread_message_count
-              FROM member_outreach mo
-              LEFT JOIN user_goal_history ugh ON ugh.outreach_id = mo.id
-              LEFT JOIN outreach_goals og ON og.id = ugh.goal_id
-              LEFT JOIN addie_threads at ON at.thread_id = mo.thread_id
-              WHERE mo.slack_user_id = $1
-              ORDER BY mo.sent_at DESC
-              LIMIT 10`;
-            const historyResult = await pool.query(outreachHistoryQuery, [slackUserId]);
-            if (historyResult.rows.length > 0) {
-              (extendedContext as typeof extendedContext & { outreach_history?: unknown }).outreach_history = historyResult.rows;
+              // Get recent person_events for timeline
+              const eventsQuery = `
+                SELECT event_type, channel, data, occurred_at
+                FROM person_events
+                WHERE person_id = $1
+                ORDER BY occurred_at DESC
+                LIMIT 10`;
+              const eventsResult = await pool.query(eventsQuery, [row.person_id]);
+              if (eventsResult.rows.length > 0) {
+                (extendedContext as typeof extendedContext & { event_timeline?: unknown }).event_timeline = eventsResult.rows;
+              }
             }
           }
 
@@ -301,81 +270,34 @@ export function createAdminRouter(): { pageRouter: Router; apiRouter: Router } {
               const capabilities = await getMemberCapabilities(slackUserId, workosUserId);
               (extendedContext as typeof extendedContext & { capabilities?: MemberCapabilities }).capabilities = capabilities;
 
-              // Get planner recommendation
-              const planner = getOutboundPlanner();
-              const insightsDb = new InsightsDatabase();
-              const [plannerInsights, history, contactEligibility] = await Promise.all([
-                insightsDb.getInsightsForUser(slackUserId),
-                outboundDb.getUserGoalHistory(slackUserId),
-                canContactUser(slackUserId),
-              ]);
+              // Get engagement opportunities from the relationship model
+              const contactEligibility = await canEngageSlackUser(slackUserId);
+              const relationship = await relationshipDb.getRelationshipBySlackId(slackUserId);
 
-              // Check if this is a personal workspace (auto-generated "User's Workspace" name)
-              const orgName = context.organization?.name ?? '';
-              const isPersonalWorkspace = orgName.toLowerCase().endsWith("'s workspace") ||
-                                          orgName.toLowerCase().endsWith("'s workspace");
+              if (relationship) {
+                const relCtx = await loadRelationshipContext(relationship.id, { includeCommunity: true });
+                const opportunities = computeEngagementOpportunities({
+                  relationship,
+                  capabilities: relCtx.profile.capabilities,
+                  company: relCtx.profile.company,
+                  recentMessages: relCtx.recentMessages,
+                  certification: relCtx.certification,
+                });
 
-              const plannerCtx: PlannerContext = {
-                user: {
-                  slack_user_id: slackUserId,
-                  workos_user_id: workosUserId,
-                  display_name: context.slack_user?.display_name ?? undefined,
-                  is_mapped: !!workosUserId,
-                  is_member: context.is_member ?? false,
-                  engagement_score: capabilities.slack_message_count_30d > 10 ? 75 :
-                                    capabilities.slack_message_count_30d > 5 ? 50 :
-                                    capabilities.slack_message_count_30d > 0 ? 25 : 0,
-                  insights: plannerInsights.map(i => ({
-                    type: i.insight_type_name ?? 'unknown',
-                    value: i.value,
-                    confidence: i.confidence,
-                  })),
-                },
-                company: context.organization ? {
-                  name: isPersonalWorkspace ? 'your account' : context.organization.name,
-                  type: 'unknown',
-                  is_personal_workspace: isPersonalWorkspace,
-                } : undefined,
-                capabilities,
-                history,
-                contact_eligibility: {
-                  can_contact: contactEligibility.canContact,
-                  reason: contactEligibility.reason ?? 'Eligible',
-                },
-                available_channels: ['slack'],
-              };
-
-              const planned = await planner.planNextAction(plannerCtx);
-              if (planned) {
-                const linkUrl = `https://agenticadvertising.org/auth/login?slack_user_id=${encodeURIComponent(slackUserId)}`;
-                const messagePreview = planner.buildMessage(planned.goal, plannerCtx, linkUrl);
-                (extendedContext as typeof extendedContext & { planner?: unknown }).planner = {
-                  recommended_action: {
-                    goal_id: planned.goal.id,
-                    goal_name: planned.goal.name,
-                    category: planned.goal.category,
-                    reason: planned.reason,
-                    priority_score: planned.priority_score,
-                    decision_method: planned.decision_method,
-                  },
-                  message_preview: messagePreview,
-                  alternative_goals: planned.alternative_goals.map(g => ({
-                    id: g.id,
-                    name: g.name,
-                    category: g.category,
+                (extendedContext as unknown as Record<string, unknown>).engagement = {
+                  opportunities: opportunities.map(o => ({
+                    id: o.id,
+                    description: o.description,
+                    dimension: o.dimension,
+                    relevance: o.relevance,
                   })),
                   contact_eligibility: {
                     can_contact: contactEligibility.canContact,
                     reason: contactEligibility.reason,
+                    channel: contactEligibility.channel,
                   },
-                };
-              } else {
-                (extendedContext as typeof extendedContext & { planner?: unknown }).planner = {
-                  recommended_action: null,
-                  contact_eligibility: {
-                    can_contact: contactEligibility.canContact,
-                    reason: contactEligibility.reason,
-                  },
+                  relationship_stage: relationship.stage,
+                  unreplied_count: relationship.unreplied_outreach_count,
                 };
               }
             } catch (plannerError) {
@@ -460,7 +382,6 @@ export function createAdminRouter(): { pageRouter: Router; apiRouter: Router } {
         logger.error({ err: error }, "Error generating widget token");
         res.status(500).json({
           error: "Internal server error",
-          message: error instanceof Error ? error.message : "Unable to generate widget token",
         });
       }
     }

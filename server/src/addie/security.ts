@@ -15,29 +15,29 @@ import type { SanitizationResult, AddieInteractionLog } from './types.js';
  */
 const SUSPICIOUS_PATTERNS = [
   // Direct instruction override attempts
-  /ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompts?|rules?)/i,
-  /forget\s+(everything|all|your)\s+(you\s+)?(know|learned|instructions?)/i,
-  /disregard\s+(all\s+)?(previous|prior|your)\s+(instructions?|rules?)/i,
+  /ignore\s+(?:all\s)?(?:previous|prior|above)\s+(?:instructions?|prompts?|rules?)/i,
+  /forget\s+(?:everything|all|your)\s+(?:you\s)?(?:know|learned|instructions?)/i,
+  /disregard\s+(?:all\s)?(?:previous|prior|your)\s+(?:instructions?|rules?)/i,
   /new\s+instructions?:/i,
   /system\s*prompt:/i,
   /you\s+are\s+now\s+a/i,
-  /pretend\s+(you\s+are|to\s+be)/i,
-  /act\s+as\s+(if|though)/i,
+  /pretend\s+(?:you\s+are|to\s+be)/i,
+  /act\s+as\s+(?:if|though)/i,
   /role\s*play\s+as/i,
 
   // Trying to extract system prompt
-  /what\s+(are|is)\s+your\s+(system\s+)?instructions?/i,
-  /show\s+(me\s+)?your\s+(system\s+)?prompt/i,
-  /reveal\s+your\s+(hidden|secret|system)/i,
-  /print\s+your\s+(initial|system)\s+prompt/i,
-  /output\s+your\s+(instructions|prompt)/i,
+  /what\s+(?:are|is)\s+your\s+(?:system\s)?instructions?/i,
+  /show\s+(?:me\s)?your\s+(?:system\s)?prompt/i,
+  /reveal\s+your\s+(?:hidden|secret|system)/i,
+  /print\s+your\s+(?:initial|system)\s+prompt/i,
+  /output\s+your\s+(?:instructions|prompt)/i,
 
   // Delimiter injection
   /\[system\]/i,
   /\[user\]/i,
   /\[assistant\]/i,
-  /<\|.*\|>/,
-  /###\s*(system|user|assistant)/i,
+  /<\|[^|]*\|>/,
+  /###\s*(?:system|user|assistant)/i,
 ];
 
 /**
@@ -114,6 +114,7 @@ export function markdownToSlackLinks(text: string): string {
   // Capture group 1: link text, Capture group 2: URL
   return text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, linkText, url) => {
     // Escape pipe characters in link text to prevent breaking Slack mrkdwn
+    // lgtm[js/incomplete-sanitization] -- only pipe needs escaping for Slack mrkdwn <url|text> syntax
     const escapedText = linkText.replace(/\|/g, '\\|');
     return `<${url}|${escapedText}>`;
   });
@@ -197,8 +198,10 @@ export async function resolveSlackMentions(
       // In JS replace(), $ has special meaning ($&, $1, $', $`)
       const escapedName = name.replace(/\$/g, '$$$$');
       // Replace <@U...> with <@U...|Name> so LLM knows who is mentioned
+      // Escape regex special characters in the Slack user ID to prevent regex injection
+      const escapedSlackUserId = slackUserId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       result = result.replace(
-        new RegExp(`<@${slackUserId}>`, 'g'),
+        new RegExp(`<@${escapedSlackUserId}>`, 'g'),
         `<@${slackUserId}|${escapedName}>`
       );
     }
@@ -233,6 +236,50 @@ export function wrapUrlsForSlack(text: string): string {
       return `<${url}>`;
     }
   );
+}
+
+/**
+ * Extract markdown images from text and return them separately.
+ * Used to convert markdown image syntax into Slack Block Kit image blocks,
+ * since Slack's mrkdwn format does not render ![alt](url).
+ *
+ * Only extracts images from allowed hosts (docs.adcontextprotocol.org)
+ * to prevent arbitrary image injection.
+ */
+export interface ExtractedImage {
+  alt: string;
+  url: string;
+}
+
+export interface ImageExtractionResult {
+  text: string;
+  images: ExtractedImage[];
+}
+
+export function extractMarkdownImages(text: string): ImageExtractionResult {
+  const images: ExtractedImage[] = [];
+
+  // Match ![alt](url) syntax — only extract from allowed hosts
+  const cleaned = text.replace(
+    /!\[([^\]]*)\]\((https?:\/\/[^)]+)\)/g,
+    (_match, alt, url) => {
+      try {
+        const parsed = new URL(url);
+        if (parsed.protocol === 'https:' && parsed.hostname === 'docs.adcontextprotocol.org') {
+          images.push({ alt: (alt || 'Image').substring(0, 2000), url });
+          return '';
+        }
+      } catch {
+        // Malformed URL, skip extraction
+      }
+      return _match; // Leave non-allowed host images as-is
+    }
+  );
+
+  // Collapse triple+ blank lines left by image removal
+  const tidied = cleaned.replace(/\n{3,}/g, '\n\n').trim();
+
+  return { text: tidied, images };
 }
 
 /**

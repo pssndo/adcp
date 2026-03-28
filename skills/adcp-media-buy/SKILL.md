@@ -57,7 +57,7 @@ Discover advertising products using natural language briefs.
 - `buying_mode` (string): Required discriminator - `"brief"` or `"wholesale"`
 - `brief` (string): Natural language description of campaign requirements
 - `brand` (object): Brand identity - `{ "domain": "acmecorp.com" }`
-- `filters` (object, optional): Filter by channels, budget, delivery_type, format_types
+- `filters` (object, optional): Filter by channels, budget, delivery_type
 
 **Response contains:**
 - `products`: Array of matching products with `product_id`, `name`, `description`, `pricing_options`
@@ -88,12 +88,13 @@ View supported creative specifications.
 **Request:**
 ```json
 {
-  "format_types": ["video", "display"]
+  "asset_types": ["video", "image"]
 }
 ```
 
 **Key fields:**
-- `format_types` (array, optional): Filter to specific format categories
+- `asset_types` (array, optional): Filter by asset types (image, video, audio, text, html, vast, etc.)
+- `name_search` (string, optional): Case-insensitive partial match on name or description
 
 **Response contains:**
 - `formats`: Array of format specifications with dimensions, requirements, and asset schemas
@@ -107,13 +108,11 @@ Create an advertising campaign from selected products.
 **Request:**
 ```json
 {
-  "buyer_ref": "campaign-2024-q1-001",
   "brand": {
     "domain": "acme.com"
   },
   "packages": [
     {
-      "buyer_ref": "pkg-video-001",
       "product_id": "premium_video_30s",
       "pricing_option_id": "cpm-standard",
       "budget": 10000
@@ -127,10 +126,8 @@ Create an advertising campaign from selected products.
 ```
 
 **Key fields:**
-- `buyer_ref` (string, required): Your unique identifier for this campaign
 - `brand` (object, required): Brand identity - `{ "domain": "acmecorp.com" }`
 - `packages` (array, required): Products to purchase, each with:
-  - `buyer_ref`: Your identifier for this package
   - `product_id`: From `get_products` response
   - `pricing_option_id`: From product's `pricing_options`
   - `budget`: Amount in dollars
@@ -219,8 +216,7 @@ Query the creative library with filtering.
 ```json
 {
   "filters": {
-    "status": ["active"],
-    "format_types": ["video"]
+    "status": ["active"]
   },
   "limit": 20
 }

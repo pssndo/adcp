@@ -152,30 +152,6 @@ export function createEventsRouter(): {
   });
 
   // =========================================================================
-  // PUBLIC PAGE ROUTES (mounted at /)
-  // =========================================================================
-
-  // Public events listing page
-  pageRouter.get("/events", optionalAuth, (req, res, next) => {
-    // Skip if this is the admin route (handled above)
-    if (req.baseUrl === "/admin") {
-      return next();
-    }
-    serveHtmlWithConfig(req, res, "events.html").catch((err) => {
-      logger.error({ err }, "Error serving events page");
-      res.status(500).send("Internal server error");
-    });
-  });
-
-  // Public event detail page
-  pageRouter.get("/events/:slug", optionalAuth, (req, res) => {
-    serveHtmlWithConfig(req, res, "event-detail.html").catch((err) => {
-      logger.error({ err }, "Error serving event detail page");
-      res.status(500).send("Internal server error");
-    });
-  });
-
-  // =========================================================================
   // ADMIN API ROUTES (mounted at /api/admin/events)
   // =========================================================================
 
@@ -1098,7 +1074,7 @@ export function createEventsRouter(): {
         event_slug?: unknown;
       };
 
-      if (!email || typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      if (!email || typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
         return res.status(400).json({ error: "Invalid email address" });
       }
 
@@ -1225,6 +1201,18 @@ export function createEventsRouter(): {
           error: "Already registered",
           message: "You are already registered for this event",
         });
+      }
+
+      // Community-only seats cannot register for summits
+      if (event.event_type === 'summit') {
+        const { getUserSeatType } = await import('../db/organization-db.js');
+        const seatType = await getUserSeatType(user.id);
+        if (seatType === 'community_only') {
+          return res.status(403).json({
+            error: "Contributor access required",
+            message: "Product summit registration requires a contributor seat. Ask your org admin to upgrade your access.",
+          });
+        }
       }
 
       // Gate registration for invite-only events

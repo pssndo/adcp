@@ -1,7 +1,8 @@
 ---
 title: Data Provider Guide
 sidebarTitle: Data Providers
-description: How to publish a signal catalog via adagents.json
+description: "Publish a signal catalog as a data provider using adagents.json. Define signal value types, authorize signal agents, and enable AI-driven audience discovery and verification through AdCP."
+"og:title": "AdCP — Data Provider Guide"
 ---
 
 # Data Provider Guide
@@ -122,6 +123,8 @@ Each signal in the `signals` array describes a targetable segment:
 | `tags` | array | Tags for grouping (lowercase, alphanumeric: `^[a-z0-9_-]+$`) |
 | `allowed_values` | array | For categorical signals: valid values |
 | `range` | object | For numeric signals: `{ min, max, unit }` |
+| `restricted_attributes` | array | Restricted attribute categories this signal touches (e.g., `["health_data"]`). Enables structural governance matching. |
+| `policy_categories` | array | Policy categories this signal is sensitive for (e.g., `["children_directed"]`). Enables structural governance matching. |
 
 ## Signal Value Types
 
@@ -395,9 +398,117 @@ A full signal catalog for an automotive data provider:
 }
 ```
 
+## Location data provider example
+
+A geo/mobility provider's signal catalog uses the same structure but with location-specific signals. Here's the `signals` array for a provider publishing foot traffic and mobility data:
+
+```json
+{
+  "signals": [
+    {
+      "id": "store_visitors",
+      "name": "Store Visitors",
+      "description": "Consumers who visited a specified retail location in the past 30 days based on opted-in mobile device data",
+      "value_type": "binary",
+      "tags": ["geo", "foot_traffic"]
+    },
+    {
+      "id": "visit_frequency",
+      "name": "Location Visit Frequency",
+      "description": "Monthly visit count to a specified location category",
+      "value_type": "numeric",
+      "range": { "min": 0, "max": 30, "unit": "visits_per_month" },
+      "tags": ["geo", "frequency"]
+    },
+    {
+      "id": "commute_pattern",
+      "name": "Commute Pattern",
+      "description": "Categorized daily commute behavior based on observed travel patterns",
+      "value_type": "categorical",
+      "allowed_values": ["urban_transit", "suburban_driver", "remote_worker", "hybrid"],
+      "tags": ["geo", "behavioral"]
+    }
+  ]
+}
+```
+
+Note how the three value types map to different geo concepts: `binary` for yes/no store visitation, `numeric` for visit frequency with a meaningful range, and `categorical` for classified mobility behavior.
+
+## Identity / demographic provider example
+
+An identity company's signal catalog publishes consumer segments derived from financial records, surveys, and public data. Note: these are **targeting segments**, not raw data. Credit-derived signals may carry regulatory obligations (FCRA) — consult your compliance team before publishing.
+
+```json
+{
+  "signals": [
+    {
+      "id": "household_income",
+      "name": "Household Income Tier",
+      "description": "Modeled household income bracket based on financial and demographic indicators",
+      "value_type": "categorical",
+      "allowed_values": ["under_50k", "50k_75k", "75k_100k", "100k_150k", "150k_250k", "over_250k"],
+      "tags": ["demographic", "income"]
+    },
+    {
+      "id": "life_stage",
+      "name": "Life Stage",
+      "description": "Life stage classification derived from demographic and behavioral indicators",
+      "value_type": "categorical",
+      "allowed_values": ["young_adult", "early_career", "established_family", "empty_nester", "retired"],
+      "tags": ["demographic", "life_stage"]
+    },
+    {
+      "id": "credit_active",
+      "name": "Active Credit Seeker",
+      "description": "Consumer has actively applied for new credit products in the past 90 days",
+      "value_type": "binary",
+      "tags": ["financial", "in_market", "credit"]
+    }
+  ]
+}
+```
+
+Identity companies often also provide cross-device identity graphs, but identity resolution as a service (matching Device A to Person B) is not yet part of the AdCP protocol. See the [signals ecosystem guide](/docs/signals/ecosystem#identity-companies) for more on this boundary.
+
+## Retail media provider example
+
+Retailers have first-party purchase data that doubles as high-value targeting signals. A retail media network can publish signals alongside its properties in the same `adagents.json`:
+
+```json
+{
+  "signals": [
+    {
+      "id": "category_buyer",
+      "name": "Category Buyer",
+      "description": "Purchased in the specified product category within the past 90 days",
+      "value_type": "categorical",
+      "allowed_values": ["electronics", "home", "beauty", "grocery", "fashion"],
+      "tags": ["retail", "purchase"]
+    },
+    {
+      "id": "purchase_frequency",
+      "name": "Monthly Purchase Frequency",
+      "description": "Number of purchases in a product category over the trailing 90 days",
+      "value_type": "numeric",
+      "range": { "min": 0, "max": 50, "unit": "purchases" },
+      "tags": ["retail", "frequency"]
+    },
+    {
+      "id": "new_to_brand",
+      "name": "New to Brand",
+      "description": "Consumer has no prior purchase history with the specified brand in the trailing 12 months",
+      "value_type": "binary",
+      "tags": ["retail", "conquest"]
+    }
+  ]
+}
+```
+
+Retail signals are especially valuable because they're deterministic — based on actual purchases, not modeled behavior. See the [signals ecosystem guide](/docs/signals/ecosystem#retail-media-networks) for the dual-role pattern (publisher + data provider).
+
 ## Validation
 
-Use the [AdAgents.json Builder](https://adcontextprotocol.org/adagents) to validate your signal catalog, or validate programmatically:
+Use the [AdAgents.json Builder](https://agenticadvertising.org/adagents/builder) to validate your signal catalog, or validate programmatically:
 
 ```bash
 curl -X POST https://adcontextprotocol.org/api/adagents/validate \
@@ -440,6 +551,60 @@ For categorical signals, always include `allowed_values`. For numeric signals, i
 ### 5. Keep Files Updated
 
 Update `last_updated` timestamp when signals change. Buyers cache these files - stale data causes authorization failures.
+
+## Declaring governance metadata
+
+Signal definitions support two optional fields that enable structural governance matching: `restricted_attributes` and `policy_categories`. When declared, governance agents can match signals against a campaign plan's restrictions deterministically instead of relying on semantic inference from signal names.
+
+### restricted_attributes
+
+Declare which GDPR Article 9 special categories of personal data a signal touches. Values: `racial_ethnic_origin`, `political_opinions`, `religious_beliefs`, `trade_union_membership`, `health_data`, `sex_life_sexual_orientation`, `genetic_data`, `biometric_data`.
+
+```json
+{
+  "id": "chronic_condition_hh",
+  "name": "Chronic Condition Households",
+  "description": "Households with modeled indicators of chronic health conditions",
+  "value_type": "binary",
+  "tags": ["health", "demographic"],
+  "restricted_attributes": ["health_data"]
+}
+```
+
+When a campaign plan declares `restricted_attributes: ["health_data"]`, a governance agent blocks this signal without needing to interpret the description.
+
+### policy_categories
+
+Declare which policy categories a signal is sensitive for. Policy categories group related regulatory regimes — `children_directed` covers COPPA, UK AADC, and GDPR Article 8. Values are registry-defined category IDs.
+
+```json
+{
+  "id": "kids_cartoon_fans",
+  "name": "Kids Cartoon Fans",
+  "description": "Children aged 6-12 who watch animated content",
+  "value_type": "binary",
+  "tags": ["entertainment", "children"],
+  "policy_categories": ["children_directed"]
+}
+```
+
+### Combining both fields
+
+A signal can declare both when it touches restricted personal data and is relevant to a specific regulatory regime:
+
+```json
+{
+  "id": "fertility_intent",
+  "name": "Fertility Intent",
+  "description": "Consumers researching fertility treatments",
+  "value_type": "binary",
+  "tags": ["health", "life_stage"],
+  "restricted_attributes": ["health_data"],
+  "policy_categories": ["pharmaceutical_advertising"]
+}
+```
+
+Without governance metadata, a governance agent must infer sensitivity from signal names — this is fragile and produces false positives. Declared attributes enable deterministic matching.
 
 ## Integration with get_adcp_capabilities
 

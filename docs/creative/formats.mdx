@@ -1,5 +1,7 @@
 ---
 title: Creative Formats
+description: "Creative formats in AdCP define asset requirements, technical constraints, and rendering behavior that shape how ads are built and delivered."
+"og:title": "AdCP — Creative Formats"
 ---
 
 
@@ -59,7 +61,7 @@ Formats may be sourced from:
 
 ```json
 {
-  "$schema": "https://adcontextprotocol.org/schemas/v2/creative/list-creative-formats-response.json",
+  "$schema": "https://adcontextprotocol.org/schemas/v3/creative/list-creative-formats-response.json",
   "formats": [
     {
       "format_id": {
@@ -88,7 +90,7 @@ Each format includes an `agent_url` that identifies the authoritative creative a
 
 ```json
 {
-  "$schema": "https://adcontextprotocol.org/schemas/v2/core/format.json",
+  "$schema": "https://adcontextprotocol.org/schemas/v3/core/format.json",
   "format_id": {
     "agent_url": "https://creative.adcontextprotocol.org",
     "id": "video_30s_hosted"
@@ -125,7 +127,7 @@ This approach allows publishers to present complex formats without constraining 
 **Example**:
 ```json
 {
-  "$schema": "https://adcontextprotocol.org/schemas/v2/core/format.json",
+  "$schema": "https://adcontextprotocol.org/schemas/v3/core/format.json",
   "format_id": {
     "agent_url": "https://publisher.com",
     "id": "homepage_takeover_premium"
@@ -147,7 +149,7 @@ AdCP uses structured format identifiers everywhere to avoid ambiguity and namesp
 
 ```json
 {
-  "$schema": "https://adcontextprotocol.org/schemas/v2/core/format-id.json",
+  "$schema": "https://adcontextprotocol.org/schemas/v3/core/format-id.json",
   "agent_url": "https://creative.adcontextprotocol.org",
   "id": "display_300x250"
 }
@@ -165,7 +167,7 @@ String-based format identifiers MUST NOT be used in API contracts.
 
 **Requests:**
 - `sync_creatives` - Uploading creative assets
-- `build_creative` - Generating creatives via creative agents
+- `build_creative` - Generating creatives via agents implementing the Creative Protocol
 - `preview_creative` - Preview generation
 - `create_media_buy` - When specifying format requirements
 
@@ -218,7 +220,7 @@ Formats are JSON objects with the following key fields:
 
 ```json
 {
-  "$schema": "https://adcontextprotocol.org/schemas/v2/core/format.json",
+  "$schema": "https://adcontextprotocol.org/schemas/v3/core/format.json",
   "format_id": {
     "agent_url": "https://creative.adcontextprotocol.org",
     "id": "video_30s_hosted"
@@ -438,7 +440,7 @@ Formats specify their rendered outputs via the `renders` array. Most formats pro
 
 ```json
 {
-  "$schema": "https://adcontextprotocol.org/schemas/v2/core/format.json",
+  "$schema": "https://adcontextprotocol.org/schemas/v3/core/format.json",
   "format_id": {
     "agent_url": "https://creative.adcontextprotocol.org",
     "id": "display_300x250"
@@ -464,7 +466,7 @@ Formats specify their rendered outputs via the `renders` array. Most formats pro
 **Multi-render example (companion ad):**
 ```json
 {
-  "$schema": "https://adcontextprotocol.org/schemas/v2/core/format.json",
+  "$schema": "https://adcontextprotocol.org/schemas/v3/core/format.json",
   "format_id": {
     "agent_url": "https://creative.adcontextprotocol.org",
     "id": "video_with_companion_300x250"
@@ -563,21 +565,9 @@ Formats specify their rendered outputs via the `renders` array. Most formats pro
 - Supports physical units for DOOH
 - Clear semantic roles for each rendered piece
 
-## Format Categories
+## Understanding Format Requirements
 
-<Warning>
-The `type` field (FormatCategory) is deprecated. While formats may still include a `type` for backward compatibility, the authoritative source for understanding what a format requires is the `assets` array. See the [Asset Discovery](#asset-discovery) section for details on determining format requirements from assets.
-</Warning>
-
-Historically, formats were classified under IAB format families:
-- Display
-- Video
-- Audio
-- Native
-
-Additional distinctions such as DOOH, CTV, or mobile describe delivery environments, not format families.
-
-However, these categories are lossy abstractions. For example:
+Traditional IAB format families (display, video, audio, native) are lossy abstractions that don't scale to emerging formats:
 - **Performance Max** spans video, display, search, and native simultaneously
 - **Search ads** (RSA) are text-only with high intent context
 - **Conversational AI** placements don't fit traditional categories
@@ -780,4 +770,4 @@ This ensures a consistent user experience regardless of what format metadata is 
 - [Asset Types](/docs/creative/asset-types) - Understanding asset specifications
 - [Channel Guides](/docs/creative/channels/video) - Detailed format documentation by media type
 - [Implementing Standard Format Support](/docs/media-buy/capability-discovery/implementing-standard-formats) - For sales agents
-- [list_creative_formats Task](/docs/media-buy/task-reference/list_creative_formats) - API reference for format discovery
+- [list_creative_formats Task](/docs/creative/task-reference/list_creative_formats) - API reference for format discovery

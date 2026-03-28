@@ -21,6 +21,7 @@ import { getPool, query } from '../db/client.js';
 import { resolveSlackUserDisplayName } from '../slack/client.js';
 import { PERSONA_LABELS } from '../config/personas.js';
 import { resolveEffectiveMembership } from '../db/org-filters.js';
+import { resolveUserRole } from '../utils/resolve-user-role.js';
 
 const slackDb = new SlackDatabase();
 const memberDb = new MemberDatabase();
@@ -221,6 +222,7 @@ export interface MemberContext {
     logo_url?: string;
     offerings: string[];
     headquarters?: string;
+    listing_type: 'personal' | 'company';
   };
 
   /** Subscription details */
@@ -377,12 +379,14 @@ export async function getMemberContext(slackUserId: string): Promise<MemberConte
         userId: slackMapping.workos_user_id,
       });
 
-      // Use the first organization (users typically have one org)
+      // Find the first active membership (users typically have one org)
       if (memberships.data && memberships.data.length > 0) {
-        const membership = memberships.data[0];
-        organizationId = membership.organizationId;
-        userRole = membership.role?.slug || 'member';
-        userJoinedAt = membership.createdAt ? new Date(membership.createdAt) : null;
+        const activeMembership = memberships.data.find(m => m.status === 'active');
+        if (activeMembership) {
+          organizationId = activeMembership.organizationId;
+          userRole = resolveUserRole(memberships.data) || 'member';
+          userJoinedAt = activeMembership.createdAt ? new Date(activeMembership.createdAt) : null;
+        }
       }
     } catch (error) {
       logger.warn({ error, workosUserId: slackMapping.workos_user_id }, 'Addie: Failed to get org memberships');
@@ -478,27 +482,26 @@ export async function getMemberContext(slackUserId: string): Promise<MemberConte
       };
 
       // Check membership including inheritance through brand hierarchy
-      if (!org.is_personal) {
-        const membership = await resolveEffectiveMembership(organizationId);
-        context.is_member = membership.is_member;
-        if (membership.is_inherited && membership.paying_org_id) {
-          context.is_inherited_member = true;
-          context.covered_by = {
-            org_id: membership.paying_org_id,
-            org_name: membership.paying_org_name ?? 'Unknown',
-          };
-        }
+      const membership = await resolveEffectiveMembership(organizationId);
+      context.is_member = membership.is_member;
+      if (membership.is_inherited && membership.paying_org_id) {
+        context.is_inherited_member = true;
+        context.covered_by = {
+          org_id: membership.paying_org_id,
+          org_name: membership.paying_org_name ?? 'Unknown',
+        };
       }
     }
 
-    // Process member profile (only for non-personal workspaces)
-    if (profile && !org?.is_personal) {
+    // Process member profile / directory listing
+    if (profile) {
       context.member_profile = {
         display_name: profile.display_name,
         tagline: profile.tagline,
         logo_url: profile.resolved_brand?.logo_url,
         offerings: profile.offerings,
         headquarters: profile.headquarters,
+        listing_type: org?.is_personal ? 'personal' : 'company',
       };
     }
 
@@ -726,10 +729,12 @@ export async function getWebMemberContext(workosUserId: string): Promise<MemberC
       });
 
       if (memberships.data && memberships.data.length > 0) {
-        const membership = memberships.data[0];
-        organizationId = membership.organizationId;
-        userRole = membership.role?.slug || 'member';
-        userJoinedAt = membership.createdAt ? new Date(membership.createdAt) : null;
+        const activeMembership = memberships.data.find(m => m.status === 'active');
+        if (activeMembership) {
+          organizationId = activeMembership.organizationId;
+          userRole = resolveUserRole(memberships.data) || 'member';
+          userJoinedAt = activeMembership.createdAt ? new Date(activeMembership.createdAt) : null;
+        }
       }
     } catch (error) {
       logger.warn({ error, workosUserId }, 'Addie Web: Failed to get org memberships');
@@ -769,28 +774,27 @@ export async function getWebMemberContext(workosUserId: string): Promise<MemberC
       };
 
       // Check membership including inheritance through brand hierarchy
-      if (!org.is_personal) {
-        const membership = await resolveEffectiveMembership(organizationId);
-        context.is_member = membership.is_member;
-        if (membership.is_inherited && membership.paying_org_id) {
-          context.is_inherited_member = true;
-          context.covered_by = {
-            org_id: membership.paying_org_id,
-            org_name: membership.paying_org_name ?? 'Unknown',
-          };
-        }
+      const membership = await resolveEffectiveMembership(organizationId);
+      context.is_member = membership.is_member;
+      if (membership.is_inherited && membership.paying_org_id) {
+        context.is_inherited_member = true;
+        context.covered_by = {
+          org_id: membership.paying_org_id,
+          org_name: membership.paying_org_name ?? 'Unknown',
+        };
       }
     }
 
-    // Step 6: Get member profile if exists (only for non-personal workspaces)
+    // Step 6: Get member profile / directory listing if exists
     const profile = await memberDb.getProfileByOrgId(organizationId);
-    if (profile && !org?.is_personal) {
+    if (profile) {
       context.member_profile = {
         display_name: profile.display_name,
         tagline: profile.tagline,
         logo_url: profile.resolved_brand?.logo_url,
         offerings: profile.offerings,
         headquarters: profile.headquarters,
+        listing_type: org?.is_personal ? 'personal' : 'company',
       };
     }
 

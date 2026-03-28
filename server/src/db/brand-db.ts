@@ -5,7 +5,52 @@ import type {
   LocalizedName,
   KellerType,
   RegistryRevision,
+  MemberBrandInfo,
+  BrandLogo,
 } from '../types.js';
+
+/**
+ * Extract logos and colors from a brand JSON structure, resolving both
+ * light-background and dark-background logo URLs.
+ */
+export function resolveBrandFromJson(
+  domain: string,
+  brandJson: Record<string, unknown>,
+  verified: boolean,
+): MemberBrandInfo {
+  const brands = brandJson.brands as Array<Record<string, unknown>> | undefined;
+  const primaryBrand = brands?.[0];
+  const logos = (primaryBrand?.logos ?? brandJson.logos) as Array<Record<string, unknown>> | undefined;
+  const colors = (primaryBrand?.colors ?? brandJson.colors) as Record<string, unknown> | undefined;
+
+  const typedLogos: BrandLogo[] | undefined = logos
+    ?.filter(l => typeof l.url === 'string' && l.url)
+    .map(l => ({
+      url: l.url as string,
+      orientation: l.orientation as BrandLogo['orientation'],
+      background: l.background as BrandLogo['background'],
+      variant: l.variant as BrandLogo['variant'],
+      usage: l.usage as string | undefined,
+    }));
+
+  // Pick the best logo for light backgrounds (default)
+  const lightLogo = typedLogos?.find(l => l.background === 'light-bg')
+    ?? typedLogos?.find(l => l.background === 'transparent-bg')
+    ?? typedLogos?.[0];
+
+  // Pick the best logo for dark backgrounds
+  const darkLogo = typedLogos?.find(l => l.background === 'dark-bg')
+    ?? typedLogos?.find(l => l.background === 'transparent-bg');
+
+  return {
+    domain,
+    logo_url: lightLogo?.url,
+    logo_url_dark: darkLogo?.url,
+    logos: typedLogos,
+    brand_color: colors?.primary as string | undefined,
+    verified,
+  };
+}
 
 /**
  * Input for creating a hosted brand
@@ -428,7 +473,7 @@ export class BrandDatabase {
     keller_type?: string;
     logo_url?: string;
     primary_color?: string;
-    industry?: string;
+    industries: string[];
     sub_brand_count: number;
     employee_count: number;
   }>> {
@@ -450,7 +495,7 @@ export class BrandDatabase {
       keller_type?: string;
       logo_url?: string;
       primary_color?: string;
-      industry?: string;
+      industries: string[];
       sub_brand_count: number;
       employee_count: number;
     }>(
@@ -465,7 +510,7 @@ export class BrandDatabase {
         COALESCE(db.keller_type, 'master') as keller_type,
         COALESCE(brand_json->'logos'->0->>'url', brand_json->'brands'->0->'logos'->0->>'url') as logo_url,
         COALESCE(brand_json->'colors'->>'primary', brand_json->'brands'->0->'colors'->>'primary') as primary_color,
-        COALESCE(brand_json->'company'->>'industry', brand_json->'brands'->0->>'industry') as industry,
+        COALESCE(brand_json->'company'->'industries', brand_json->'brands'->0->'industries', '[]'::jsonb) as industries,
         (SELECT COUNT(*)::int FROM discovered_brands sub WHERE sub.house_domain = brand_domain) as sub_brand_count,
         COALESCE(CASE WHEN brand_json->'company'->>'employees' ~ '^\d+$' THEN (brand_json->'company'->>'employees')::int ELSE 0 END, 0) as employee_count
       FROM hosted_brands
@@ -485,7 +530,7 @@ export class BrandDatabase {
         keller_type,
         brand_manifest->'logos'->0->>'url' as logo_url,
         brand_manifest->'colors'->>'primary' as primary_color,
-        brand_manifest->'company'->>'industry' as industry,
+        COALESCE(brand_manifest->'company'->'industries', '[]'::jsonb) as industries,
         (SELECT COUNT(*)::int FROM discovered_brands sub WHERE sub.house_domain = discovered_brands.domain) as sub_brand_count,
         COALESCE(CASE WHEN brand_manifest->'company'->>'employees' ~ '^\d+$' THEN (brand_manifest->'company'->>'employees')::int ELSE 0 END, 0) as employee_count
       FROM discovered_brands

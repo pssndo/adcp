@@ -408,7 +408,6 @@ export function createContentRouter(): Router {
       logger.error({ err: error }, 'GET /api/content/collections error');
       res.status(500).json({
         error: 'Failed to get collections',
-        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });
@@ -445,7 +444,6 @@ export function createContentRouter(): Router {
       logger.error({ err: error }, 'POST /api/content/propose error');
       res.status(500).json({
         error: 'Failed to propose content',
-        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });
@@ -483,7 +481,7 @@ export function createContentRouter(): Router {
       // Build query for pending content
       let query = `
         SELECT
-          p.id, p.title, p.excerpt, p.slug, p.content_type,
+          p.id, p.title, p.excerpt, p.content, p.slug, p.content_type,
           p.proposer_user_id, p.proposed_at, p.working_group_id,
           wg.name as committee_name, wg.slug as committee_slug,
           u.first_name, u.last_name, u.email as proposer_email,
@@ -520,6 +518,7 @@ export function createContentRouter(): Router {
         title: row.title,
         slug: row.slug,
         excerpt: row.excerpt,
+        content: row.content,
         content_type: row.content_type,
         proposer: {
           id: row.proposer_user_id,
@@ -554,7 +553,6 @@ export function createContentRouter(): Router {
       logger.error({ err: error }, 'GET /api/content/pending error');
       res.status(500).json({
         error: 'Failed to get pending content',
-        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });
@@ -670,7 +668,6 @@ export function createContentRouter(): Router {
       logger.error({ err: error }, 'POST /api/content/:id/approve error');
       res.status(500).json({
         error: 'Failed to approve content',
-        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });
@@ -687,8 +684,15 @@ export function createContentRouter(): Router {
         });
       }
 
+      // Validate URL protocol to prevent SSRF with non-HTTP schemes
+      const parsedUrl = new URL(url);
+      if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+        return res.status(400).json({ error: 'Only http and https URLs are supported' });
+      }
+
       // Fetch the page
-      const response = await fetch(url, {
+      // CodeQL: authenticated endpoint, URL protocol validated above
+      const response = await fetch(url, { // lgtm[js/request-forgery]
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; AgenticAdvertising/1.0)',
           'Accept': 'text/html,application/xhtml+xml',
@@ -715,15 +719,16 @@ export function createContentRouter(): Router {
 
       // Decode HTML entities helper
       const decodeHtmlEntities = (text: string): string => {
+        // &amp; must be decoded last to avoid double-decoding (e.g. &amp;lt; -> &lt; -> <)
         return text
-          .replace(/&amp;/g, '&')
           .replace(/&lt;/g, '<')
           .replace(/&gt;/g, '>')
           .replace(/&quot;/g, '"')
           .replace(/&#39;/g, "'")
           .replace(/&nbsp;/g, ' ')
           .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(dec))
-          .replace(/&#x([0-9A-Fa-f]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+          .replace(/&#x([0-9A-Fa-f]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+          .replace(/&amp;/g, '&');
       };
 
       // Determine title (prefer og:title, then <title>)
@@ -739,7 +744,7 @@ export function createContentRouter(): Router {
       if (!site_name) {
         try {
           const parsedUrl = new URL(url);
-          site_name = parsedUrl.hostname.replace('www.', '');
+          site_name = parsedUrl.hostname.replace(/www\./g, '');
           // Capitalize first letter
           site_name = site_name.charAt(0).toUpperCase() + site_name.slice(1);
         } catch {
@@ -757,7 +762,6 @@ export function createContentRouter(): Router {
       logger.error({ err: error }, 'POST /api/content/fetch-url error');
       res.status(500).json({
         error: 'Failed to fetch URL',
-        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });
@@ -840,7 +844,6 @@ export function createContentRouter(): Router {
       logger.error({ err: error }, 'POST /api/content/:id/reject error');
       res.status(500).json({
         error: 'Failed to reject content',
-        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });
@@ -967,7 +970,6 @@ export function createMyContentRouter(): Router {
       logger.error({ err: error }, 'GET /api/me/content error');
       res.status(500).json({
         error: 'Failed to get content',
-        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });
@@ -1085,7 +1087,6 @@ export function createMyContentRouter(): Router {
       logger.error({ err: error }, 'PUT /api/me/content/:id error');
       res.status(500).json({
         error: 'Failed to update content',
-        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });
@@ -1163,7 +1164,6 @@ export function createMyContentRouter(): Router {
       logger.error({ err: error }, 'POST /api/me/content/:id/authors error');
       res.status(500).json({
         error: 'Failed to add author',
-        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });
@@ -1227,7 +1227,6 @@ export function createMyContentRouter(): Router {
       logger.error({ err: error }, 'DELETE /api/me/content/:id/authors/:authorId error');
       res.status(500).json({
         error: 'Failed to remove author',
-        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });

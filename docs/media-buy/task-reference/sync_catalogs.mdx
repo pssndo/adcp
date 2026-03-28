@@ -1,5 +1,7 @@
 ---
 title: sync_catalogs
+description: "sync_catalogs task — sync product feeds, store locations, and vertical catalogs (hotel, flight, vehicle, real estate) to AdCP seller accounts for catalog-driven campaigns."
+"og:title": "AdCP — sync_catalogs"
 ---
 
 
@@ -128,6 +130,12 @@ Responses use discriminated unions — you get either `catalogs` or `errors`, ne
 }
 ```
 
+## Item review lifecycle
+
+Catalog items follow a simple review cycle: items enter `pending` on sync, and the platform reviews them asynchronously. Items are either `approved`, `rejected` (with reasons), or `approved` with `warning` (serving but with fixable issues).
+
+Rejection is not terminal — fix the issue in the source catalog and re-sync. Re-syncing an item resets it to `pending` for re-review. The `item_issues` array on the response identifies per-item rejection reasons.
+
 ## Discovery mode
 
 Omit `catalogs` to list all catalogs on the account without modification:
@@ -255,4 +263,4 @@ Configure `push_notification_config` on the request to receive webhook notificat
 - [Catalogs](/docs/creative/catalogs) — Complete documentation on catalog types, sourcing, and format requirements
 - [Account state](/docs/building/integration/account-state) — How catalogs fit into the account setup sequence
 - [sync_creatives](/docs/creative/task-reference/sync_creatives) — Submit creatives that reference synced catalogs
-- [list_creative_formats](/docs/media-buy/task-reference/list_creative_formats) — Discover format catalog requirements
+- [list_creative_formats](/docs/creative/task-reference/list_creative_formats) — Discover format catalog requirements

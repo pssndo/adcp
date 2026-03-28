@@ -49,10 +49,21 @@ import { AAO_HOST, aaoHostedBrandJsonUrl } from "../config/aao.js";
 import { fetchBrandData, isBrandfetchConfigured, ENRICHMENT_CACHE_MAX_AGE_MS } from "../services/brandfetch.js";
 import { PropertyCheckService } from "../services/property-check.js";
 import { PropertyCheckDatabase } from "../db/property-check-db.js";
+import { ComplianceDatabase, type LifecycleStage } from "../db/compliance-db.js";
 
 const logger = createLogger("registry-api");
 const propertyCheckService = new PropertyCheckService();
 const propertyCheckDb = new PropertyCheckDatabase();
+const complianceDb = new ComplianceDatabase();
+
+/** Strip protocol, path, query, and fragment from a URL to extract the domain. */
+function extractDomain(raw: string): string {
+  let d = raw.replace(/^https?:\/\//, "");
+  const pathIdx = d.search(/[/?#]/);
+  if (pathIdx !== -1) d = d.substring(0, pathIdx);
+  if (d.endsWith("/")) d = d.slice(0, -1);
+  return d.toLowerCase();
+}
 
 // ── Config ──────────────────────────────────────────────────────
 
@@ -217,8 +228,8 @@ registry.registerPath({
   request: {
     query: z.object({
       search: z.string().optional(),
-      limit: z.string().optional().openapi({ example: "100" }),
-      offset: z.string().optional().openapi({ example: "0" }),
+      limit: z.string().optional().openapi({ type: 'integer', example: 100 }),
+      offset: z.string().optional().openapi({ type: 'integer', example: 0 }),
     }),
   },
   responses: {
@@ -251,8 +262,8 @@ registry.registerPath({
   request: {
     query: z.object({
       domain: z.string().openapi({ example: "acmecorp.com" }),
-      limit: z.string().optional().openapi({ example: "20" }),
-      offset: z.string().optional().openapi({ example: "0" }),
+      limit: z.string().optional().openapi({ type: 'integer', example: 20 }),
+      offset: z.string().optional().openapi({ type: 'integer', example: 0 }),
     }),
   },
   responses: {
@@ -286,8 +297,8 @@ registry.registerPath({
   request: {
     query: z.object({
       domain: z.string().openapi({ example: "examplepub.com" }),
-      limit: z.string().optional().openapi({ example: "20" }),
-      offset: z.string().optional().openapi({ example: "0" }),
+      limit: z.string().optional().openapi({ type: 'integer', example: 20 }),
+      offset: z.string().optional().openapi({ type: 'integer', example: 0 }),
     }),
   },
   responses: {
@@ -340,8 +351,8 @@ registry.registerPath({
   request: {
     query: z.object({
       search: z.string().optional(),
-      limit: z.string().optional().openapi({ example: "100" }),
-      offset: z.string().optional().openapi({ example: "0" }),
+      limit: z.string().optional().openapi({ type: 'integer', example: 100 }),
+      offset: z.string().optional().openapi({ type: 'integer', example: 0 }),
     }),
   },
   responses: {
@@ -473,6 +484,7 @@ registry.registerPath({
       health: z.enum(["true"]).optional(),
       capabilities: z.enum(["true"]).optional(),
       properties: z.enum(["true"]).optional(),
+      compliance: z.enum(["true"]).optional(),
     }),
   },
   responses: {
@@ -809,7 +821,7 @@ registry.registerPath({
   operationId: "listPolicies",
   summary: "List policies",
   description:
-    "Browse and search the governance policy registry. Returns approved policies with optional filtering by category, enforcement level, jurisdiction, vertical, and governance domain.",
+    "Browse and search the governance policy registry. Returns approved policies with optional filtering by category, enforcement level, jurisdiction, policy category, and governance domain.",
   tags: ["Policy Registry"],
   request: {
     query: z.object({
@@ -817,10 +829,10 @@ registry.registerPath({
       category: z.enum(["regulation", "standard"]).optional(),
       enforcement: z.enum(["must", "should", "may"]).optional(),
       jurisdiction: z.string().optional().openapi({ example: "EU", description: "Filter by jurisdiction (includes region alias matching)" }),
-      vertical: z.string().optional().openapi({ example: "finance" }),
+      policy_category: z.string().optional().openapi({ example: "age_restricted" }),
       domain: z.string().optional().openapi({ example: "campaign", description: "Filter by governance domain" }),
-      limit: z.string().optional().openapi({ description: "Results per page (default 20, max 1000)" }),
-      offset: z.string().optional().openapi({ description: "Pagination offset (default 0)" }),
+      limit: z.string().optional().openapi({ type: 'integer', description: "Results per page (default 20, max 1000)" }),
+      offset: z.string().optional().openapi({ type: 'integer', description: "Pagination offset (default 0)" }),
     }),
   },
   responses: {
@@ -892,8 +904,8 @@ registry.registerPath({
   request: {
     query: z.object({
       policy_id: z.string().openapi({ example: "gdpr_consent" }),
-      limit: z.string().optional().openapi({ description: "Results per page (max 100, default 20)" }),
-      offset: z.string().optional().openapi({ description: "Pagination offset (default 0)" }),
+      limit: z.string().optional().openapi({ type: 'integer', description: "Results per page (max 100, default 20)" }),
+      offset: z.string().optional().openapi({ type: 'integer', description: "Pagination offset (default 0)" }),
     }),
   },
   responses: {
@@ -925,7 +937,7 @@ registry.registerPath({
             description: z.string().optional(),
             jurisdictions: z.array(z.string()).optional(),
             region_aliases: z.record(z.string(), z.array(z.string())).optional(),
-            verticals: z.array(z.string()).optional(),
+            policy_categories: z.array(z.string()).optional(),
             channels: z.array(z.string()).optional(),
             effective_date: z.string().optional(),
             sunset_date: z.string().optional(),
@@ -1027,7 +1039,7 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
 
   router.get("/brands/history", async (req, res) => {
     try {
-      const domain = (req.query.domain as string)?.replace(/^https?:\/\//, "").replace(/[/?#].*$/, "").replace(/\/$/, "").toLowerCase();
+      const domain = extractDomain((req.query.domain as string) || "");
       if (!domain) {
         return res.status(400).json({ error: "domain parameter required" });
       }
@@ -1167,7 +1179,7 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
         return res.status(400).json({ error: "domain parameter required" });
       }
 
-      const domain = rawDomain.replace(/^https?:\/\//, '').replace(/[/?#].*$/, '').replace(/\/$/, '').toLowerCase();
+      const domain = extractDomain(rawDomain);
 
       // Return cached enrichment if still fresh (avoids Brandfetch API cost)
       const existing = await brandDb.getDiscoveredBrandByDomain(domain);
@@ -1289,7 +1301,7 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
         return res.status(400).json({ error: "brand_name is required" });
       }
 
-      const domain = rawDomain.replace(/^https?:\/\//, "").replace(/[/?#].*$/, "").replace(/\/$/, "").toLowerCase();
+      const domain = extractDomain(rawDomain);
       const domainPattern = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
       if (!domainPattern.test(domain)) {
         return res.status(400).json({ error: "Invalid domain format" });
@@ -1379,7 +1391,7 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
 
   router.get("/properties/history", async (req, res) => {
     try {
-      const domain = (req.query.domain as string)?.replace(/^https?:\/\//, "").replace(/[/?#].*$/, "").replace(/\/$/, "").toLowerCase();
+      const domain = extractDomain((req.query.domain as string) || "");
       if (!domain) {
         return res.status(400).json({ error: "domain parameter required" });
       }
@@ -1586,7 +1598,7 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
         return res.status(400).json({ error: "authorized_agents array is required" });
       }
 
-      const publisher_domain = rawDomain.replace(/^https?:\/\//, "").replace(/[/?#].*$/, "").replace(/\/$/, "").toLowerCase();
+      const publisher_domain = extractDomain(rawDomain);
       const domainPattern = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
       if (!domainPattern.test(publisher_domain)) {
         return res.status(400).json({ error: "Invalid domain format" });
@@ -1720,10 +1732,10 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
-      logger.error({ error: error instanceof Error ? error.message : String(error) }, "Failed to validate domain:");
+      logger.error({ err: error, path: req.path }, "Failed to validate domain");
       return res.status(500).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "Failed to validate domain",
         timestamp: new Date().toISOString(),
       });
     }
@@ -1782,10 +1794,10 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
-      logger.error({ error: error instanceof Error ? error.message : String(error) }, "Failed to create adagents.json:");
+      logger.error({ err: error, path: req.path }, "Failed to create adagents.json");
       return res.status(500).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "Failed to create adagents.json",
         timestamp: new Date().toISOString(),
       });
     }
@@ -1870,6 +1882,7 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
       const withHealth = req.query.health === "true";
       const withCapabilities = req.query.capabilities === "true";
       const withProperties = req.query.properties === "true";
+      const withCompliance = req.query.compliance === "true";
 
       const federatedAgents = await federatedIndex.listAllAgents(type);
 
@@ -1896,9 +1909,14 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
         discovered: federatedAgents.filter((a) => a.source === "discovered").length,
       };
 
-      if (!withHealth && !withCapabilities && !withProperties) {
+      if (!withHealth && !withCapabilities && !withProperties && !withCompliance) {
         return res.json({ agents, count: agents.length, sources: bySource });
       }
+
+      // Bulk-fetch compliance status if requested
+      const complianceMap = withCompliance
+        ? await complianceDb.bulkGetComplianceStatus(agents.map(a => a.url))
+        : null;
 
       const enriched = await Promise.all(
         agents.map(async (agent): Promise<AgentWithStats> => {
@@ -1979,15 +1997,200 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
             }
           }
 
+          if (complianceMap) {
+            const cs = complianceMap.get(agent.url);
+            if (cs) {
+              enrichedAgent.compliance = {
+                status: cs.status,
+                lifecycle_stage: cs.lifecycle_stage,
+                tracks: cs.tracks_summary_json || {},
+                streak_days: cs.streak_days,
+                last_checked_at: cs.last_checked_at?.toISOString() || null,
+                headline: cs.headline,
+              };
+            }
+          }
+
           return enrichedAgent;
         })
       );
 
       res.json({ agents: enriched, count: enriched.length, sources: bySource });
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to list agents" });
+      logger.error({ err: error, path: req.path }, "Failed to list agents");
+      res.status(500).json({ error: "Failed to list agents" });
     }
   });
+
+  // ── Agent Compliance Endpoints ──────────────────────────────────
+
+  router.get("/registry/agents/:encodedUrl/compliance", async (req, res) => {
+    try {
+      const agentUrl = decodeURIComponent(req.params.encodedUrl);
+      if (!validateAgentUrlParam(agentUrl)) {
+        return res.status(400).json({ error: "Invalid agent URL" });
+      }
+      const status = await complianceDb.getComplianceStatus(agentUrl);
+      const metadata = await complianceDb.getRegistryMetadata(agentUrl);
+
+      if (!status) {
+        return res.json({
+          agent_url: agentUrl,
+          status: "unknown",
+          lifecycle_stage: metadata?.lifecycle_stage || "production",
+          tracks: {},
+          streak_days: 0,
+          last_checked_at: null,
+          headline: null,
+        });
+      }
+
+      res.json({
+        agent_url: agentUrl,
+        status: status.status,
+        lifecycle_stage: metadata?.lifecycle_stage || "production",
+        tracks: status.tracks_summary_json || {},
+        streak_days: status.streak_days,
+        last_checked_at: status.last_checked_at?.toISOString() || null,
+        last_passed_at: status.last_passed_at?.toISOString() || null,
+        last_failed_at: status.last_failed_at?.toISOString() || null,
+        headline: status.headline,
+        status_changed_at: status.status_changed_at?.toISOString() || null,
+      });
+    } catch (error) {
+      logger.error({ err: error, path: req.path }, "Failed to get compliance status");
+      res.status(500).json({ error: "Failed to get compliance status" });
+    }
+  });
+
+  router.get("/registry/agents/:encodedUrl/compliance/history", async (req, res) => {
+    try {
+      const agentUrl = decodeURIComponent(req.params.encodedUrl);
+      if (!validateAgentUrlParam(agentUrl)) {
+        return res.status(400).json({ error: "Invalid agent URL" });
+      }
+      const limit = Math.min(parseInt(req.query.limit as string) || 30, 100);
+      const history = await complianceDb.getComplianceHistory(agentUrl, limit);
+
+      res.json({
+        agent_url: agentUrl,
+        runs: history.map(run => ({
+          id: run.id,
+          overall_status: run.overall_status,
+          headline: run.headline,
+          tracks_passed: run.tracks_passed,
+          tracks_failed: run.tracks_failed,
+          tracks_skipped: run.tracks_skipped,
+          tracks_partial: run.tracks_partial,
+          total_duration_ms: run.total_duration_ms,
+          triggered_by: run.triggered_by,
+          tested_at: run.tested_at,
+        })),
+        count: history.length,
+      });
+    } catch (error) {
+      logger.error({ err: error, path: req.path }, "Failed to get compliance history");
+      res.status(500).json({ error: "Failed to get compliance history" });
+    }
+  });
+
+  const complianceWriteMiddleware = authMiddleware ? [authMiddleware] : [];
+
+  /**
+   * Verify the authenticated user belongs to the organization that owns this agent.
+   * Returns true if ownership is confirmed, false otherwise.
+   */
+  async function verifyAgentOwnership(userId: string, agentUrl: string): Promise<boolean> {
+    try {
+      const result = await query(
+        `SELECT 1 FROM member_profiles mp
+         JOIN organization_memberships om
+           ON om.workos_organization_id = mp.workos_organization_id
+         WHERE mp.agents @> $1::jsonb
+           AND om.workos_user_id = $2
+         LIMIT 1`,
+        [JSON.stringify([{ url: agentUrl }]), userId],
+      );
+      return result.rows.length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  function validateAgentUrlParam(raw: string): string | null {
+    try {
+      const url = new URL(raw);
+      if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+      return raw;
+    } catch {
+      return null;
+    }
+  }
+
+  router.put("/registry/agents/:encodedUrl/lifecycle", ...complianceWriteMiddleware, async (req, res) => {
+    try {
+      const agentUrl = decodeURIComponent(req.params.encodedUrl);
+      if (!validateAgentUrlParam(agentUrl)) {
+        return res.status(400).json({ error: "Invalid agent URL" });
+      }
+
+      if (req.user) {
+        const isOwner = await verifyAgentOwnership(req.user.id, agentUrl);
+        if (!isOwner) {
+          return res.status(403).json({ error: "You do not have permission to modify this agent" });
+        }
+      }
+
+      const { lifecycle_stage } = req.body;
+
+      const validStages = ["development", "testing", "production", "deprecated"];
+      if (!lifecycle_stage || !validStages.includes(lifecycle_stage)) {
+        return res.status(400).json({ error: `lifecycle_stage must be one of: ${validStages.join(", ")}` });
+      }
+
+      const metadata = await complianceDb.upsertRegistryMetadata(agentUrl, {
+        lifecycle_stage: lifecycle_stage as LifecycleStage,
+      });
+
+      res.json(metadata);
+    } catch (error) {
+      logger.error({ err: error, path: req.path }, "Failed to update lifecycle stage");
+      res.status(500).json({ error: "Failed to update lifecycle stage" });
+    }
+  });
+
+  router.put("/registry/agents/:encodedUrl/compliance/opt-out", ...complianceWriteMiddleware, async (req, res) => {
+    try {
+      const agentUrl = decodeURIComponent(req.params.encodedUrl);
+      if (!validateAgentUrlParam(agentUrl)) {
+        return res.status(400).json({ error: "Invalid agent URL" });
+      }
+
+      if (req.user) {
+        const isOwner = await verifyAgentOwnership(req.user.id, agentUrl);
+        if (!isOwner) {
+          return res.status(403).json({ error: "You do not have permission to modify this agent" });
+        }
+      }
+
+      const { opt_out } = req.body;
+
+      if (typeof opt_out !== "boolean") {
+        return res.status(400).json({ error: "opt_out must be a boolean" });
+      }
+
+      const metadata = await complianceDb.upsertRegistryMetadata(agentUrl, {
+        compliance_opt_out: opt_out,
+      });
+
+      res.json(metadata);
+    } catch (error) {
+      logger.error({ err: error, path: req.path }, "Failed to update compliance opt-out");
+      res.status(500).json({ error: "Failed to update compliance opt-out" });
+    }
+  });
+
+  // ── Publishers ──────────────────────────────────────────────────
 
   router.get("/registry/publishers", async (_req, res) => {
     try {
@@ -1999,7 +2202,8 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
       };
       res.json({ publishers, count: publishers.length, sources: bySource });
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to list publishers" });
+      logger.error({ err: error, path: _req.path }, "Failed to list publishers");
+      res.status(500).json({ error: "Failed to list publishers" });
     }
   });
 
@@ -2009,7 +2213,8 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
       const stats = await federatedIndex.getStats();
       res.json(stats);
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to get registry stats" });
+      logger.error({ err: error, path: _req.path }, "Failed to get registry stats");
+      res.status(500).json({ error: "Failed to get registry stats" });
     }
   });
 
@@ -2022,7 +2227,8 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
       const result = await federatedIndex.lookupDomain(domain);
       res.json(result);
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Domain lookup failed" });
+      logger.error({ err: error, path: req.path }, "Domain lookup failed");
+      res.status(500).json({ error: "Domain lookup failed" });
     }
   });
 
@@ -2038,7 +2244,8 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
       const results = await federatedIndex.findAgentsForPropertyIdentifier(type as string, value as string);
       res.json({ type, value, agents: results, count: results.length });
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Property lookup failed" });
+      logger.error({ err: error, path: req.path }, "Property lookup failed");
+      res.status(500).json({ error: "Property lookup failed" });
     }
   });
 
@@ -2049,7 +2256,8 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
       const domains = await federatedIndex.getDomainsForAgent(agentUrl);
       res.json({ agent_url: agentUrl, domains, count: domains.length });
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Agent domain lookup failed" });
+      logger.error({ err: error, path: req.path }, "Agent domain lookup failed");
+      res.status(500).json({ error: "Agent domain lookup failed" });
     }
   });
 
@@ -2069,7 +2277,8 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
       const result = await federatedIndex.validateAgentForProduct(agent_url, publisher_properties);
       res.json({ agent_url, ...result, checked_at: new Date().toISOString() });
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Product authorization validation failed" });
+      logger.error({ err: error, path: req.path }, "Product authorization validation failed");
+      res.status(500).json({ error: "Product authorization validation failed" });
     }
   });
 
@@ -2109,7 +2318,9 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
         generated_at: new Date().toISOString(),
       });
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Property expansion failed" });
+      logger.error({ err: error, path: req.path }, "Property expansion failed");
+      // codeql[js/user-controlled-bypass] - static error message, no user input in response
+      res.status(500).json({ error: "Property expansion failed" });
     }
   });
 
@@ -2136,7 +2347,8 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
         checked_at: new Date().toISOString(),
       });
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Property authorization check failed" });
+      logger.error({ err: error, path: req.path }, "Property authorization check failed");
+      res.status(500).json({ error: "Property authorization check failed" });
     }
   });
 
@@ -2215,13 +2427,13 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
 
       return res.json({ name: agentName, description: agentInfo.description, protocols, type: agentType, stats });
     } catch (error) {
-      logger.error({ err: error, url }, "Public agent discovery error");
+      logger.warn({ err: error, url }, "Public agent discovery error");
 
       if (error instanceof Error && error.name === "TimeoutError") {
         return res.status(504).json({ error: "Connection timeout", message: "Agent did not respond within 10 seconds" });
       }
 
-      return res.status(500).json({ error: "Agent discovery failed", message: error instanceof Error ? error.message : "Unknown error" });
+      return res.status(500).json({ error: "Agent discovery failed" });
     }
   });
 
@@ -2242,7 +2454,6 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
           return {
             format_id: format.format_id,
             name: format.name,
-            type: format.type,
             description: format.description,
             example_url: format.example_url,
             renders: format.renders,
@@ -2259,7 +2470,7 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
         return res.status(504).json({ error: "Connection timeout", message: "Agent did not respond within the timeout period" });
       }
 
-      return res.status(500).json({ error: "Failed to fetch formats", message: error instanceof Error ? error.message : "Unknown error" });
+      return res.status(500).json({ error: "Failed to fetch formats" });
     }
   });
 
@@ -2304,7 +2515,7 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
         return res.status(504).json({ error: "Connection timeout", message: "Agent did not respond within the timeout period" });
       }
 
-      return res.status(500).json({ error: "Failed to fetch products", message: error instanceof Error ? error.message : "Unknown error" });
+      return res.status(500).json({ error: "Failed to fetch products" });
     }
   });
 
@@ -2333,7 +2544,7 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
     } catch (error) {
       logger.error({ err: error, domain }, "Public publisher validation error");
 
-      return res.status(500).json({ error: "Publisher validation failed", message: error instanceof Error ? error.message : "Unknown error" });
+      return res.status(500).json({ error: "Publisher validation failed" });
     }
   });
 
@@ -2393,11 +2604,7 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
       return res.status(400).json({ error: "brand_name is required" });
     }
 
-    const domain = rawDomain
-      .replace(/^https?:\/\/(www\.)?/, "")
-      .replace(/[/?#].*$/, "")
-      .replace(/\/$/, "")
-      .toLowerCase();
+    const domain = extractDomain(rawDomain).replace(/^www\./, "");
 
     const domainPattern = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
     if (!domainPattern.test(domain)) {
@@ -2527,7 +2734,8 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
         category: req.query.category as any,
         enforcement: req.query.enforcement as any,
         jurisdiction: req.query.jurisdiction as string,
-        vertical: req.query.vertical as string,
+        policy_category: typeof (req.query.policy_category ?? req.query.vertical) === 'string'
+          ? (req.query.policy_category ?? req.query.vertical) as string : undefined,
         domain: req.query.domain as string,
         limit: req.query.limit ? Math.min(parseInt(req.query.limit as string), 1000) : undefined,
         offset: parseInt(req.query.offset as string) || 0,
@@ -2656,12 +2864,22 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
         }
       }
 
+      // Bridge deprecated field name: verticals → policy_categories
+      if (req.body.verticals !== undefined && req.body.policy_categories === undefined) {
+        req.body.policy_categories = req.body.verticals;
+      }
+
       // Validate JSONB array fields
       if (req.body.jurisdictions !== undefined && !Array.isArray(req.body.jurisdictions)) {
         return res.status(400).json({ error: "jurisdictions must be an array" });
       }
-      if (req.body.verticals !== undefined && !Array.isArray(req.body.verticals)) {
-        return res.status(400).json({ error: "verticals must be an array" });
+      if (req.body.policy_categories !== undefined) {
+        if (!Array.isArray(req.body.policy_categories)) {
+          return res.status(400).json({ error: "policy_categories must be an array" });
+        }
+        if (!req.body.policy_categories.every((v: unknown) => typeof v === 'string' && v.length > 0 && v.length <= 100)) {
+          return res.status(400).json({ error: "policy_categories must be an array of non-empty strings" });
+        }
       }
       if (req.body.channels !== undefined && req.body.channels !== null && !Array.isArray(req.body.channels)) {
         return res.status(400).json({ error: "channels must be an array" });
@@ -2686,7 +2904,7 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
           enforcement,
           jurisdictions: req.body.jurisdictions,
           region_aliases: req.body.region_aliases,
-          verticals: req.body.verticals,
+          policy_categories: req.body.policy_categories,
           channels: req.body.channels,
           effective_date: req.body.effective_date,
           sunset_date: req.body.sunset_date,
@@ -2715,10 +2933,12 @@ export function createRegistryApiRouter(config: RegistryApiConfig): Router {
       });
     } catch (error: any) {
       if (error.message?.includes("Cannot edit authoritative")) {
-        return res.status(409).json({ error: error.message, policy_id: req.body.policy_id });
+        logger.error({ err: error, policy_id: req.body.policy_id }, "Policy conflict");
+        return res.status(409).json({ error: "Policy conflict", policy_id: req.body.policy_id });
       }
       if (error.message?.includes("pending review")) {
-        return res.status(409).json({ error: error.message, policy_id: req.body.policy_id });
+        logger.error({ err: error, policy_id: req.body.policy_id }, "Policy conflict");
+        return res.status(409).json({ error: "Policy conflict", policy_id: req.body.policy_id });
       }
       logger.error({ error }, "Failed to save policy");
       return res.status(500).json({ error: "Failed to save policy" });

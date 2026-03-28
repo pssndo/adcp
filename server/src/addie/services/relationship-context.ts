@@ -1,9 +1,19 @@
 import { query } from '../../db/client.js';
 import * as relationshipDb from '../../db/relationship-db.js';
 import { getMemberCapabilities, hasRelevantUpcomingEvents } from '../../db/outbound-db.js';
-import { InsightsDatabase } from '../../db/insights-db.js';
+import * as certDb from '../../db/certification-db.js';
 import type { PersonRelationship } from '../../db/relationship-db.js';
 import type { MemberCapabilities } from '../types.js';
+import type { CertificationSummary } from './engagement-planner.js';
+
+// Cache aggregate cert stats for 5 minutes (changes slowly)
+let _certStatsCache: { value: { totalCertified: number; totalOrgs: number }; expiry: number } | null = null;
+async function getCachedCertAggregateStats() {
+  if (_certStatsCache && Date.now() < _certStatsCache.expiry) return _certStatsCache.value;
+  const stats = await certDb.getCertAggregateStats();
+  _certStatsCache = { value: stats, expiry: Date.now() + 5 * 60 * 1000 };
+  return stats;
+}
 
 // =====================================================
 // TYPES
@@ -13,10 +23,10 @@ export interface RelationshipContext {
   relationship: PersonRelationship;
   recentMessages: CrossSurfaceMessage[];
   profile: {
-    insights: Array<{ type: string; value: string; confidence: string }>;
     capabilities: MemberCapabilities | null;
     company: CompanyInfo | null;
   };
+  certification: CertificationSummary | null;
   community?: CommunityContext;
 }
 
@@ -60,23 +70,11 @@ export async function loadRelationshipContext(
   }
 
   const { slack_user_id, workos_user_id, prospect_org_id } = relationship;
-  const insightsDb = new InsightsDatabase();
 
   // Fan out all independent queries in parallel
-  const [messages, insights, capabilities, company, community] = await Promise.all([
+  const [messages, capabilities, company, certification, community] = await Promise.all([
     // Recent messages across all surfaces
     loadRecentMessages(personId),
-
-    // Insights from conversations
-    slack_user_id
-      ? insightsDb.getInsightsForUser(slack_user_id).then(rows =>
-          rows.map(r => ({
-            type: r.insight_type_name ?? String(r.insight_type_id),
-            value: r.value,
-            confidence: r.confidence,
-          }))
-        )
-      : Promise.resolve([]),
 
     // Member capabilities
     slack_user_id
@@ -85,6 +83,11 @@ export async function loadRelationshipContext(
 
     // Company info
     loadCompanyInfo(workos_user_id, prospect_org_id),
+
+    // Certification progress
+    workos_user_id
+      ? loadCertificationSummary(workos_user_id)
+      : Promise.resolve(null),
 
     // Community context (only when requested)
     options?.includeCommunity
@@ -96,10 +99,10 @@ export async function loadRelationshipContext(
     relationship,
     recentMessages: messages,
     profile: {
-      insights,
       capabilities,
       company,
     },
+    certification,
     community,
   };
 }
@@ -191,6 +194,70 @@ async function loadCompanyInfo(
   return null;
 }
 
+async function loadCertificationSummary(workosUserId: string): Promise<CertificationSummary | null> {
+  try {
+    const [progress, credentials, modules, abandoned] = await Promise.all([
+      certDb.getProgress(workosUserId),
+      certDb.getUserCredentials(workosUserId),
+      certDb.getModules(),
+      certDb.getAbandonedModule(workosUserId),
+    ]);
+
+    const summary: CertificationSummary = {
+      modulesCompleted: progress.filter(p => p.status === 'completed' || p.status === 'tested_out').length,
+      totalModules: modules.length,
+      credentialsEarned: credentials.map(c => c.credential_id),
+      hasInProgressTrack: progress.some(p => p.status === 'in_progress'),
+      abandonedModuleTitle: abandoned?.title ?? null,
+    };
+
+    // Load expectation and team progress if user belongs to an org
+    try {
+      const orgResult = await query<{ workos_organization_id: string }>(
+        `SELECT workos_organization_id FROM organization_memberships
+         WHERE workos_user_id = $1 LIMIT 1`,
+        [workosUserId]
+      );
+      const orgId = orgResult.rows[0]?.workos_organization_id;
+      if (orgId) {
+        const [expectation, teamProgress, globalStats] = await Promise.all([
+          certDb.getCertExpectationForUser(orgId, workosUserId),
+          certDb.getOrgCertProgress(orgId),
+          getCachedCertAggregateStats(),
+        ]);
+        if (expectation) {
+          summary.expectationStatus = expectation.status;
+          summary.snoozedUntil = expectation.snooze_until;
+        }
+        if (teamProgress.total > 1) {
+          summary.teamCertProgress = teamProgress;
+        }
+        if (globalStats.totalCertified >= 10) {
+          summary.globalCertifiedCount = globalStats.totalCertified;
+        }
+
+        // Check if completion was already celebrated
+        if (expectation?.status === 'completed') {
+          const celebratedResult = await query<{ count: string }>(
+            `SELECT COUNT(*)::text AS count FROM person_events
+             WHERE person_id = (SELECT id FROM person_relationships WHERE workos_user_id = $1 LIMIT 1)
+               AND event_type = 'message_sent'
+               AND data->>'goal_hint' = 'cert_completion_congrats'`,
+            [workosUserId]
+          );
+          summary.completionCelebrated = parseInt(celebratedResult.rows[0]?.count || '0') > 0;
+        }
+      }
+    } catch {
+      // Non-critical — expectation/team data is optional
+    }
+
+    return summary;
+  } catch {
+    return null;
+  }
+}
+
 async function loadCommunityContext(
   workosUserId: string | null,
   slackUserId: string | null
@@ -247,15 +314,6 @@ export function formatContextForPrompt(ctx: RelationshipContext): string {
   lines.push(`**Interactions**: ${r.interaction_count} messages across ${channelList}`);
   lines.push(`**Sentiment**: ${r.sentiment_trend}`);
   lines.push(`**Last contact**: Addie ${lastAddieContact}, them ${lastPersonContact}`);
-
-  // Insights
-  if (profile.insights.length > 0) {
-    lines.push('');
-    lines.push('### What we know');
-    for (const insight of profile.insights) {
-      lines.push(`- ${insight.type}: ${insight.value}`);
-    }
-  }
 
   // Capabilities
   const capLines = formatCapabilitiesForPrompt(profile.capabilities);

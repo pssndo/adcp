@@ -1,5 +1,6 @@
 import express from "express";
 import cookieParser from "cookie-parser";
+import { csrfProtection } from "./middleware/csrf.js";
 import escapeHtml from "escape-html";
 import * as fs from "fs/promises";
 import path from "path";
@@ -21,10 +22,11 @@ import type { Agent, AgentType, AgentWithStats, Company } from "./types.js";
 import { isValidAgentType, VALID_MEMBER_OFFERINGS, VALID_LEGAL_DOCUMENT_TYPES } from "./types.js";
 import type { Server } from "http";
 import { stripe, STRIPE_WEBHOOK_SECRET, createStripeCustomer, createCustomerPortalSession, createCustomerSession, fetchAllPaidInvoices, fetchAllRefunds, getPendingInvoices, type RevenueEvent } from "./billing/stripe-client.js";
+import { resolveOrgForStripeCustomer } from "./billing/webhook-helpers.js";
 import Stripe from "stripe";
-import { OrganizationDatabase, CompanyType, RevenueTier } from "./db/organization-db.js";
+import { OrganizationDatabase, getUserSeatType, type SeatType } from "./db/organization-db.js";
 import { MemberDatabase } from "./db/member-db.js";
-import { BrandDatabase } from "./db/brand-db.js";
+import { BrandDatabase, resolveBrandFromJson } from "./db/brand-db.js";
 import { BrandManager } from "./brand-manager.js";
 import { PropertyDatabase } from "./db/property-db.js";
 import * as manifestRefsDb from "./db/manifest-refs-db.js";
@@ -34,8 +36,7 @@ import { syncSlackUsers, getSyncStatus, tryAutoLinkWebsiteUserToSlack } from "./
 import { isSlackConfigured, testSlackConnection } from "./slack/client.js";
 import { handleSlashCommand } from "./slack/commands.js";
 import { getCompanyDomain } from "./utils/email-domain.js";
-import { requireAuth, requireAdmin, requireManage, optionalAuth, invalidateSessionCache, isDevModeEnabled, getDevUser, getAvailableDevUsers, getDevSessionCookieName, DEV_USERS, type DevUserConfig } from "./middleware/auth.js";
-import { isWebUserAAOCouncil } from "./addie/mcp/admin-tools.js";
+import { requireAuth, requireAdmin, optionalAuth, invalidateSessionCache, isDevModeEnabled, getDevUser, getAvailableDevUsers, getDevSessionCookieName, DEV_USERS, type DevUserConfig } from "./middleware/auth.js";
 import { invitationRateLimiter, orgCreationRateLimiter, bulkResolveRateLimiter, brandCreationRateLimiter, notificationRateLimiter } from "./middleware/rate-limit.js";
 import { validateOrganizationName, validateEmail } from "./middleware/validation.js";
 import jwt from "jsonwebtoken";
@@ -48,15 +49,14 @@ import {
 } from "./notifications/billing.js";
 import { createAdminRouter } from "./routes/admin.js";
 import { createAdminInsightsRouter } from "./routes/admin-insights.js";
-import { createAdminOutboundRouter } from "./routes/admin-outbound.js";
-import { markLinkAccountGoalsSucceeded } from "./db/outbound-db.js";
 import { createAddieAdminRouter } from "./routes/addie-admin.js";
-import { createMoltbookAdminRouter } from "./routes/moltbook-admin.js";
 import { createAddieChatRouter } from "./routes/addie-chat.js";
 import { createTavusRouter } from "./routes/tavus.js";
 import { createSiChatRoutes } from "./routes/si-chat.js";
 import { sendAccountLinkedMessage, invalidateMemberContextCache, isAddieBoltReady } from "./addie/index.js";
 import { invalidateMembershipCache } from "./db/org-filters.js";
+import * as relationshipDb from "./db/relationship-db.js";
+import * as personEvents from "./db/person-events-db.js";
 import { isWebUserAAOAdmin } from "./addie/mcp/admin-tools.js";
 import { createSlackRouter } from "./routes/slack.js";
 import { createWebhooksRouter } from "./routes/webhooks.js";
@@ -76,6 +76,7 @@ import { createCommitteeRouters } from "./routes/committees.js";
 import { createContentRouter, createMyContentRouter } from "./routes/content.js";
 import { createMeetingRouters } from "./routes/meetings.js";
 import { createMemberProfileRouter, createAdminMemberProfileRouter } from "./routes/member-profiles.js";
+import { createPublicPortraitRouter, createPortraitRouter, createAdminPortraitRouter } from "./routes/portraits.js";
 import { createCommunityRouters } from "./routes/community.js";
 import { createCertificationRouters } from "./routes/certification.js";
 import { createEngagementRouter } from "./routes/engagement.js";
@@ -92,7 +93,6 @@ import { createCreativeAgentRouter } from "./creative-agent/index.js";
 import { sendWelcomeEmail, sendUserSignupEmail, emailDb } from "./notifications/email.js";
 import { emailPrefsDb } from "./db/email-preferences-db.js";
 import { queuePerspectiveLink } from "./addie/services/content-curator.js";
-import { InsightsDatabase } from "./db/insights-db.js";
 import { serveHtmlWithMetaTags, enrichUserWithMembership } from "./utils/html-config.js";
 import { notifyJoinRequest, notifyMemberAdded, notifySubscriptionThankYou } from "./slack/org-group-dm.js";
 import { BansDatabase } from "./db/bans-db.js";
@@ -289,7 +289,7 @@ async function upsertInvoiceCache(
  * Build app config object for injection into HTML pages.
  * This allows nav.js to read config synchronously instead of making an async fetch.
  */
-function buildAppConfig(user?: { id?: string; email: string; firstName?: string | null; lastName?: string | null; isMember?: boolean } | null, isManage = false) {
+function buildAppConfig(user?: { id?: string; email: string; firstName?: string | null; lastName?: string | null; isMember?: boolean } | null) {
   let isAdmin = false;
   if (user) {
     const adminEmails = process.env.ADMIN_EMAILS?.split(',').map(e => e.trim().toLowerCase()) || [];
@@ -304,7 +304,6 @@ function buildAppConfig(user?: { id?: string; email: string; firstName?: string 
       firstName: user.firstName,
       lastName: user.lastName,
       isAdmin,
-      isManage: isManage || isAdmin,
       isMember: !!user.isMember,
     } : null,
     posthog: POSTHOG_API_KEY ? {
@@ -317,8 +316,8 @@ function buildAppConfig(user?: { id?: string; email: string; firstName?: string 
 /**
  * Generate the script tags to inject app config and PostHog into HTML.
  */
-function getAppConfigScript(user?: { id?: string; email: string; firstName?: string | null; lastName?: string | null; isMember?: boolean } | null, isManage = false): string {
-  const config = buildAppConfig(user, isManage);
+function getAppConfigScript(user?: { id?: string; email: string; firstName?: string | null; lastName?: string | null; isMember?: boolean } | null): string {
+  const config = buildAppConfig(user);
   const configScript = `<script>window.__APP_CONFIG__=${JSON.stringify(config)};</script>`;
 
   // Add PostHog script if API key is configured
@@ -326,7 +325,10 @@ function getAppConfigScript(user?: { id?: string; email: string; firstName?: str
     ? `<script src="/posthog-init.js" defer></script>`
     : '';
 
-  return `${configScript}\n${posthogScript}`;
+  // csrf.js patches fetch() to include the X-CSRF-Token header on POSTs
+  const csrfScript = `<script src="/csrf.js"></script>`;
+
+  return `${configScript}\n${csrfScript}\n${posthogScript}`;
 }
 
 /**
@@ -348,6 +350,7 @@ async function getUserFromRequest(
 
   // Then check WorkOS session
   const sessionCookie = req.cookies?.['wos-session'];
+  // codeql[js/user-controlled-bypass] - session cookie is verified cryptographically by WorkOS sealed session
   if (sessionCookie && AUTH_ENABLED && workos) {
     try {
       const session = workos.userManagement.loadSealedSession({
@@ -471,6 +474,7 @@ export class HTTPServer {
       //   (both JSON for events and URL-encoded for commands)
       if (req.path === '/api/webhooks/stripe' ||
           req.path === '/api/webhooks/resend-inbound' ||
+          req.path === '/api/webhooks/resend-tracking' ||
           req.path === '/api/webhooks/workos' ||
           req.path === '/api/webhooks/zoom' ||
           req.path.startsWith('/api/slack/')) {
@@ -480,6 +484,7 @@ export class HTTPServer {
       }
     });
     this.app.use(cookieParser());
+    this.app.use(csrfProtection);
 
     // Serve JSON schemas at /schemas/* from dist/schemas (built schemas)
     // In dev: __dirname is server/src, dist is at ../../dist
@@ -696,28 +701,49 @@ export class HTTPServer {
     this.app.use(async (req, res, next) => {
       const urlPath = req.path;
 
-      // Skip paths that have their own route handlers which manage auth and config injection
-      // (e.g. /dashboard injects isManage; /manage requires kitchen-cabinet auth;
-      // /agents does content negotiation to serve HTML or JSON)
-      if (urlPath.startsWith('/manage') || urlPath.startsWith('/dashboard') || urlPath === '/agents' || urlPath === '/chat') {
+      // Keep the AdCP domain docs-first even when index.html is requested directly.
+      if (urlPath === '/index.html' && this.isAdcpDomain(req)) {
+        return res.redirect(302, 'https://docs.adcontextprotocol.org/');
+      }
+
+      // Skip paths that have their own route handlers (redirects or custom serving)
+      const skipExact = ['/agents', '/brands', '/publishers', '/registry', '/registry/', '/latest', '/latest/', '/working-groups', '/working-groups/', '/chat', '/governance'];
+      if (urlPath.startsWith('/dashboard') || skipExact.includes(urlPath)) {
         return next();
       }
 
-      // Determine the file path to check
+      // Sanitize input: split into segments, reject traversal and
+      // non-allowlisted characters. Reconstructing from validated segments
+      // breaks taint propagation from req.path.
+      const segments = urlPath.split('/').filter(Boolean);
+      if (segments.some(s => s === '..' || s === '.' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(s))) {
+        return next();
+      }
+
+      // Determine which file to look for
+      const lastSegment = segments[segments.length - 1] || '';
       let filePath: string;
-      if (urlPath.endsWith('.html')) {
-        filePath = path.join(publicPath, urlPath);
-      } else if (!urlPath.includes('.')) {
-        // Extensionless path - check if .html version exists
-        filePath = path.join(publicPath, urlPath + '.html');
+      if (lastSegment.endsWith('.html')) {
+        filePath = path.join(publicPath, ...segments);
+      } else if (!lastSegment.includes('.')) {
+        // Extensionless path - try .html version
+        filePath = path.join(publicPath, ...segments.slice(0, -1), lastSegment + '.html');
       } else {
-        // Has an extension but not .html - skip
         return next();
       }
 
       try {
-        // Check if file exists
-        await fs.access(filePath);
+        // Read HTML file; for extensionless paths, also try /index.html
+        let html: string;
+        try {
+          html = await fs.readFile(filePath, 'utf-8');
+        } catch {
+          if (lastSegment.endsWith('.html')) {
+            throw new Error('not found');
+          }
+          filePath = path.join(publicPath, ...segments, 'index.html');
+          html = await fs.readFile(filePath, 'utf-8');
+        }
 
         // Cross-domain session bridge: if on AdCP without a session cookie,
         // redirect through AAO to pick up the session (if one exists).
@@ -727,8 +753,7 @@ export class HTTPServer {
         const user = await getUserFromRequest(req, res);
         await enrichUserWithMembership(user);
 
-        // Read and inject config
-        let html = await fs.readFile(filePath, 'utf-8');
+        // Inject config
         const configScript = getAppConfigScript(user);
 
         // Inject before </head>
@@ -750,7 +775,26 @@ export class HTTPServer {
       }
     });
 
-    this.app.use(express.static(publicPath, { index: false }));
+    // Redirect routes that have matching directories/files in public/
+    // but are handled by route handlers. Must come before express.static
+    // to prevent directory trailing-slash redirects.
+    this.app.use((req, res, next) => {
+      const redirects: Record<string, string> = {
+        '/latest': '/stories',
+        '/latest/': '/stories',
+        '/working-groups': '/committees?type=working_group',
+        '/working-groups/': '/committees?type=working_group',
+        '/brands': '/registry?tab=brands',
+        '/publishers': '/registry?tab=properties',
+      };
+      const target = redirects[req.path];
+      if (target && req.method === 'GET') {
+        return res.redirect(301, target);
+      }
+      next();
+    });
+
+    this.app.use(express.static(publicPath, { index: false, redirect: false }));
   }
 
 
@@ -809,20 +853,9 @@ export class HTTPServer {
       const user = await getUserFromRequest(req, res);
       await enrichUserWithMembership(user);
 
-      // Determine manage-tier access for nav rendering
-      let isManage = false;
-      if (user) {
-        if (isDevModeEnabled()) {
-          const devUser = getDevUser(req);
-          isManage = devUser?.isManage ?? false;
-        } else if (user.id) {
-          isManage = await isWebUserAAOCouncil(user.id) || await isWebUserAAOAdmin(user.id);
-        }
-      }
-
       // Read and inject config
       let html = await fs.readFile(filePath, 'utf-8');
-      const configScript = getAppConfigScript(user, isManage);
+      const configScript = getAppConfigScript(user);
 
       // Inject before </head>
       if (html.includes('</head>')) {
@@ -868,20 +901,11 @@ export class HTTPServer {
     this.app.use('/admin', insightsPageRouter);      // Page routes: /admin/insights, /admin/insight-types, etc.
     this.app.use('/api/admin', insightsApiRouter);   // API routes: /api/admin/insights, /api/admin/insight-types, etc.
 
-    // Mount admin outbound planner routes (goals, rehearsal)
-    const { pageRouter: outboundPageRouter, apiRouter: outboundApiRouter } = createAdminOutboundRouter();
-    this.app.use('/admin', outboundPageRouter);          // Page routes: /admin/goals, /admin/rehearsal
-    this.app.use('/api/admin/outbound', outboundApiRouter); // API routes: /api/admin/outbound/goals, /api/admin/outbound/rehearsal
-
     // Mount Addie admin routes
     const { pageRouter: addiePageRouter, apiRouter: addieApiRouter } = createAddieAdminRouter();
     this.app.use('/admin/addie', addiePageRouter);      // Page routes: /admin/addie
     this.app.use('/api/admin/addie', addieApiRouter);   // API routes: /api/admin/addie/*
 
-    // Mount Moltbook admin routes
-    const { pageRouter: moltbookPageRouter, apiRouter: moltbookApiRouter } = createMoltbookAdminRouter();
-    this.app.use('/admin/moltbook', moltbookPageRouter);    // Page routes: /admin/moltbook
-    this.app.use('/api/admin/moltbook', moltbookApiRouter); // API routes: /api/admin/moltbook/*
 
     // Mount Addie chat routes (public chat interface)
     const { pageRouter: chatPageRouter, apiRouter: chatApiRouter } = createAddieChatRouter();
@@ -1027,6 +1051,11 @@ export class HTTPServer {
     const adminMemberProfileRouter = createAdminMemberProfileRouter(memberProfileConfig);
     this.app.use('/api/admin/member-profiles', adminMemberProfileRouter); // Admin profile routes: /api/admin/member-profiles/*
 
+    // Mount portrait routes
+    this.app.use('/api/portraits', createPublicPortraitRouter());
+    this.app.use('/api/me/portrait', createPortraitRouter({ orgDb, memberDb, invalidateMemberContextCache }));
+    this.app.use('/api/admin/portraits', createAdminPortraitRouter());
+
     // Mount community routes
     const communityDb = new CommunityDatabase();
     const communitySlackDb = new SlackDatabase();
@@ -1054,10 +1083,23 @@ export class HTTPServer {
     this.app.use('/api/me/api-keys', createApiKeysRouter());
 
     // Mount training agent (embedded AdCP sales agent for testing and certification)
-    this.app.use('/api/training-agent', createTrainingAgentRouter());
+    const trainingAgentRouter = createTrainingAgentRouter();
+    this.app.use('/api/training-agent', trainingAgentRouter);
 
     // Mount reference creative agent (canonical format definitions and preview rendering)
-    this.app.use('/api/creative-agent', createCreativeAgentRouter());
+    const creativeAgentRouter = createCreativeAgentRouter();
+    this.app.use('/api/creative-agent', creativeAgentRouter);
+
+    // Host-based routing: serve embedded agents at root for legacy standalone URLs
+    this.app.use((req, res, next) => {
+      if (req.hostname === 'test-agent.adcontextprotocol.org') {
+        return trainingAgentRouter(req, res, next);
+      }
+      if (req.hostname === 'creative.adcontextprotocol.org') {
+        return creativeAgentRouter(req, res, next);
+      }
+      next();
+    });
 
     // Mount events routes
     const { pageRouter: eventsPageRouter, adminApiRouter: eventsAdminApiRouter, publicApiRouter: eventsPublicApiRouter } = createEventsRouter();
@@ -1107,6 +1149,18 @@ export class HTTPServer {
         return res.redirect('/');
       }
 
+      // Validate destination URL protocol to prevent javascript: or data: redirects
+      try {
+        const parsed = new URL(destinationUrl);
+        if (!['http:', 'https:'].includes(parsed.protocol)) {
+          logger.warn({ trackingId, destinationUrl }, 'Click tracker blocked non-HTTP redirect');
+          return res.redirect('/');
+        }
+      } catch {
+        logger.warn({ trackingId, destinationUrl }, 'Click tracker blocked invalid URL');
+        return res.redirect('/');
+      }
+
       try {
         // Record the click
         await emailDb.recordClick({
@@ -1128,7 +1182,8 @@ export class HTTPServer {
       }
 
       // Always redirect to destination
-      res.redirect(destinationUrl);
+      // CodeQL: email click tracker - URL protocol validated above, intentional redirect to tracked links
+      res.redirect(destinationUrl); // lgtm[js/server-side-unvalidated-url-redirection]
     });
 
     // ==================== Email Preferences & Unsubscribe ====================
@@ -1232,11 +1287,11 @@ export class HTTPServer {
       ${userCategoryPrefs.map(cat => `
         <div class="category">
           <div class="category-info">
-            <h3>${cat.category_name}</h3>
-            <p>${cat.category_description || ''}</p>
+            <h3>${escapeHtml(cat.category_name)}</h3>
+            <p>${escapeHtml(cat.category_description || '')}</p>
           </div>
           <label class="toggle">
-            <input type="checkbox" ${cat.enabled ? 'checked' : ''} onchange="toggleCategory('${cat.category_id}', this.checked)">
+            <input type="checkbox" ${cat.enabled ? 'checked' : ''} onchange="toggleCategory('${escapeHtml(cat.category_id)}', this.checked)">
             <span class="slider"></span>
           </label>
         </div>
@@ -1250,7 +1305,7 @@ export class HTTPServer {
   `}
 
   <script>
-    const token = '${token}';
+    const token = '${escapeHtml(token)}';
 
     async function toggleCategory(categoryId, enabled) {
       try {
@@ -1487,17 +1542,7 @@ export class HTTPServer {
         const user = await getUserFromRequest(req, res);
         await enrichUserWithMembership(user);
 
-        let isManage = false;
-        if (user) {
-          if (isDevModeEnabled()) {
-            const devUser = getDevUser(req);
-            isManage = devUser?.isManage ?? false;
-          } else if (user.id) {
-            isManage = await isWebUserAAOCouncil(user.id) || await isWebUserAAOAdmin(user.id);
-          }
-        }
-
-        const configScript = getAppConfigScript(user, isManage);
+        const configScript = getAppConfigScript(user);
         if (html.includes('</head>')) {
           html = html.replace('</head>', `${configScript}\n</head>`);
         }
@@ -1536,17 +1581,7 @@ export class HTTPServer {
         const user = await getUserFromRequest(req, res);
         await enrichUserWithMembership(user);
 
-        let isManage = false;
-        if (user) {
-          if (isDevModeEnabled()) {
-            const devUser = getDevUser(req);
-            isManage = devUser?.isManage ?? false;
-          } else if (user.id) {
-            isManage = await isWebUserAAOCouncil(user.id) || await isWebUserAAOAdmin(user.id);
-          }
-        }
-
-        const configScript = getAppConfigScript(user, isManage);
+        const configScript = getAppConfigScript(user);
         if (html.includes('</head>')) {
           html = html.replace('</head>', `${configScript}\n</head>`);
         }
@@ -1563,6 +1598,7 @@ export class HTTPServer {
     };
 
     this.app.get('/dashboard/organization', (req, res) => serveDashboardPage(req, res, 'dashboard-organization.html'));
+    this.app.get('/dashboard/team', (req, res) => serveDashboardPage(req, res, 'team.html'));
     this.app.get('/dashboard/settings', (req, res) => serveDashboardPage(req, res, 'dashboard-settings.html'));
     this.app.get('/dashboard/membership', (req, res) => serveDashboardPage(req, res, 'dashboard-membership.html'));
     // Redirect old billing path to new membership path
@@ -1652,7 +1688,7 @@ export class HTTPServer {
       } catch (error) {
         logger.error({ err: error, domain, agent_url }, 'Validation failed');
         res.status(500).json({
-          error: error instanceof Error ? error.message : "Validation failed",
+          error: "Validation failed",
         });
       }
     });
@@ -1723,7 +1759,7 @@ export class HTTPServer {
       } catch (error) {
         logger.error({ err: error, agentId }, 'Capability discovery failed');
         res.status(500).json({
-          error: error instanceof Error ? error.message : "Capability discovery failed",
+          error: "Capability discovery failed",
         });
       }
     });
@@ -1739,7 +1775,7 @@ export class HTTPServer {
       } catch (error) {
         logger.error({ err: error, agentCount: agents.length }, 'Bulk capability discovery failed');
         res.status(500).json({
-          error: error instanceof Error ? error.message : "Bulk discovery failed",
+          error: "Bulk discovery failed",
         });
       }
     });
@@ -1754,7 +1790,7 @@ export class HTTPServer {
     // Agent registry - serves HTML for browsers, JSON for API clients
     this.app.get("/agents", async (req, res) => {
       if (req.accepts('text/html', 'application/json') === 'text/html') {
-        return this.serveHtmlWithConfig(req, res, 'agents.html');
+        return res.redirect(301, '/registry?tab=agents');
       }
       const type = req.query.type as AgentType | undefined;
       const agents = await this.agentService.listAgents(type);
@@ -1815,7 +1851,8 @@ export class HTTPServer {
 
     // Homepage route - serve different homepage based on host
     // agenticadvertising.org (beta): Org-focused homepage
-    // adcontextprotocol.org (production): Protocol-focused homepage
+    // agenticadvertising.org (production): Org-focused homepage
+    // adcontextprotocol.org (production): Redirect to docs
     this.app.get("/", async (req, res) => {
       const hostname = req.hostname || '';
       const betaOverride = req.query.beta;
@@ -1832,14 +1869,35 @@ export class HTTPServer {
                      hostname === '127.0.0.1';
       }
 
-      // Beta site gets org-focused homepage, production gets protocol homepage
-      const homepageFile = isBetaSite ? 'org-index.html' : 'index.html';
-      await this.serveHtmlWithConfig(req, res, homepageFile);
+      if (!isBetaSite) {
+        return res.redirect(302, 'https://docs.adcontextprotocol.org/');
+      }
+
+      await this.serveHtmlWithConfig(req, res, 'index.html');
     });
 
-    // Registry UI route - serve registry.html at /registry
+    // Registry UI — tabbed page serving different registry content based on ?tab parameter
     this.app.get("/registry", async (req, res) => {
-      await this.serveHtmlWithConfig(req, res, 'registry.html');
+      const tabMap: Record<string, string> = {
+        agents: 'agents.html',
+        brands: 'brands.html',
+        properties: 'publishers.html',
+        policies: 'policies.html',
+        members: 'members.html',
+      };
+      const tab = req.query.tab as string | undefined;
+      const htmlFile = (tab && tabMap[tab]) || 'agents.html';
+      await this.serveHtmlWithConfig(req, res, htmlFile);
+    });
+
+    // Tools hub for registry utilities and builder workflows
+    this.app.get("/registry/tools", async (req, res) => {
+      await this.serveHtmlWithConfig(req, res, 'registry-tools.html');
+    });
+
+    // Backward-compatible tools alias
+    this.app.get("/tools", (_req, res) => {
+      res.redirect(301, '/registry/tools');
     });
 
     // adagents.json project landing page
@@ -1907,19 +1965,23 @@ export class HTTPServer {
       await this.serveHtmlWithConfig(req, res, 'brand-landing.html');
     });
 
-    // Standalone brand registry page
-    this.app.get("/brands", async (req, res) => {
-      await this.serveHtmlWithConfig(req, res, 'brands.html');
+    // Standalone registry pages redirect to unified /registry with tab
+    this.app.get("/brands", (_req, res) => {
+      res.redirect(301, '/registry?tab=brands');
     });
 
-    // Publishers registry page
-    this.app.get("/publishers", async (req, res) => {
-      await this.serveHtmlWithConfig(req, res, 'publishers.html');
+    this.app.get("/publishers", (_req, res) => {
+      res.redirect(301, '/registry?tab=properties');
     });
 
-    // Properties registry page (redirects to publishers - consolidated)
+    // Policies registry page
+    this.app.get("/policies", async (req, res) => {
+      await this.serveHtmlWithConfig(req, res, 'policies.html');
+    });
+
+    // Properties registry page (redirects to unified registry)
     this.app.get("/properties", (_req, res) => {
-      res.redirect(301, '/publishers');
+      res.redirect(301, '/registry?tab=properties');
     });
 
     // Referral landing page - personalized invite page for prospects
@@ -1937,9 +1999,9 @@ export class HTTPServer {
       await this.serveHtmlWithConfig(req, res, 'membership.html');
     });
 
-    // Governance page - serve governance.html at /governance
-    this.app.get("/governance", async (req, res) => {
-      await this.serveHtmlWithConfig(req, res, 'governance.html');
+    // Governance page - redirect to about page leadership section
+    this.app.get("/governance", (req, res) => {
+      res.redirect(301, '/about#leadership');
     });
 
     // Perspectives index redirects to perspectives section
@@ -1965,9 +2027,11 @@ export class HTTPServer {
       try {
         const pool = getPool();
         const result = await pool.query(
-          `SELECT title, excerpt, subtitle, featured_image_url, author_name, published_at, updated_at
-           FROM perspectives
-           WHERE slug = $1 AND status = 'published'`,
+          `SELECT p.title, p.excerpt, p.subtitle, p.featured_image_url, p.author_name, p.published_at, p.updated_at
+           FROM perspectives p
+           LEFT JOIN working_groups wg ON wg.id = p.working_group_id
+           WHERE p.slug = $1 AND p.status = 'published'
+             AND (p.working_group_id IS NULL OR wg.slug = 'editorial')`,
           [slug]
         );
         if (result.rows.length > 0) {
@@ -2007,9 +2071,9 @@ export class HTTPServer {
       await this.serveHtmlWithConfig(req, res, 'event-detail.html');
     });
 
-    // Working Groups pages - public list, detail pages handled by single HTML
-    this.app.get("/working-groups", async (req, res) => {
-      await this.serveHtmlWithConfig(req, res, 'working-groups.html');
+    // Working Groups index redirects to committees with type filter
+    this.app.get("/working-groups", (_req, res) => {
+      res.redirect(301, '/committees?type=working_group');
     });
 
     // Committees page (unified view for working groups, councils, chapters)
@@ -2066,10 +2130,10 @@ export class HTTPServer {
           timestamp: new Date().toISOString(),
         });
       } catch (error) {
-        logger.error({ error: error instanceof Error ? error.message : String(error) }, 'Failed to validate agent cards:');
+        logger.error({ err: error, path: req.path }, 'Failed to validate agent cards');
         return res.status(500).json({
           success: false,
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: 'Failed to validate agent cards',
           timestamp: new Date().toISOString(),
         });
       }
@@ -2362,10 +2426,12 @@ export class HTTPServer {
         return res.json({ brand, revision_number });
       } catch (error: any) {
         if (error.message?.includes('not found')) {
-          return res.status(404).json({ error: error.message });
+          logger.warn({ err: error, path: req.path }, 'Brand not found during edit');
+          return res.status(404).json({ error: 'Resource not found' });
         }
         if (error.message?.includes('Cannot edit')) {
-          return res.status(403).json({ error: error.message });
+          logger.warn({ err: error, path: req.path }, 'Access denied editing brand');
+          return res.status(403).json({ error: 'Access denied' });
         }
         logger.error({ error }, 'Failed to edit discovered brand');
         return res.status(500).json({ error: 'Failed to edit brand' });
@@ -2437,7 +2503,8 @@ export class HTTPServer {
         return res.json({ brand, revision_number });
       } catch (error: any) {
         if (error.message?.includes('not found')) {
-          return res.status(404).json({ error: error.message });
+          logger.warn({ err: error, path: req.path }, 'Brand not found during rollback');
+          return res.status(404).json({ error: 'Resource not found' });
         }
         logger.error({ error }, 'Failed to rollback brand');
         return res.status(500).json({ error: 'Failed to rollback brand' });
@@ -2722,10 +2789,12 @@ export class HTTPServer {
         return res.json({ property, revision_number });
       } catch (error: any) {
         if (error.message?.includes('not found')) {
-          return res.status(404).json({ error: error.message });
+          logger.warn({ err: error, path: req.path }, 'Property not found during edit');
+          return res.status(404).json({ error: 'Resource not found' });
         }
         if (error.message?.includes('Cannot edit')) {
-          return res.status(403).json({ error: error.message });
+          logger.warn({ err: error, path: req.path }, 'Access denied editing property');
+          return res.status(403).json({ error: 'Access denied' });
         }
         logger.error({ error }, 'Failed to edit hosted property');
         return res.status(500).json({ error: 'Failed to edit property' });
@@ -2797,7 +2866,8 @@ export class HTTPServer {
         return res.json({ property, revision_number });
       } catch (error: any) {
         if (error.message?.includes('not found')) {
-          return res.status(404).json({ error: error.message });
+          logger.warn({ err: error, path: req.path }, 'Property not found during rollback');
+          return res.status(404).json({ error: 'Resource not found' });
         }
         logger.error({ error }, 'Failed to rollback property');
         return res.status(500).json({ error: 'Failed to rollback property' });
@@ -3130,29 +3200,17 @@ export class HTTPServer {
               eventType: event.type,
             }, 'Processing subscription event');
 
+            // Resolve org once for all subscription event types
+            const customerId = subscription.customer as string;
+            const org = await resolveOrgForStripeCustomer({
+              customerId,
+              stripe,
+              orgDb,
+              subscription,
+            });
+
             // For subscription created, record agreement acceptance atomically
             if (event.type === 'customer.subscription.created') {
-              const customerId = subscription.customer as string;
-
-              // Try to find org by stripe_customer_id first
-              let org = await orgDb.getOrganizationByStripeCustomerId(customerId);
-
-              // If not found, look up by workos_organization_id in Stripe customer metadata
-              if (!org) {
-                logger.info({ customerId }, 'Org not found by customer ID, checking Stripe metadata');
-                const customer = await stripe.customers.retrieve(customerId) as Stripe.Customer;
-                const workosOrgId = customer.metadata?.workos_organization_id;
-
-                if (workosOrgId) {
-                  org = await orgDb.getOrganization(workosOrgId);
-                  if (org) {
-                    // Link the Stripe customer ID to the organization
-                    await orgDb.setStripeCustomerId(workosOrgId, customerId);
-                    logger.info({ workosOrgId, customerId }, 'Linked Stripe customer to organization');
-                  }
-                }
-              }
-
               if (org) {
                 // Get agreement info from organization's pending fields
                 // (set when user checked the agreement checkbox)
@@ -3363,15 +3421,12 @@ export class HTTPServer {
             // Update database with subscription status, period end, and pricing details
             // This allows admin dashboard to display data without querying Stripe API
             try {
-              const customerId = subscription.customer as string;
-              const org = await orgDb.getOrganizationByStripeCustomerId(customerId);
-
               if (org) {
                 // Calculate period end from subscription or invoice
                 let periodEnd: Date | null = null;
 
-                if ((subscription as any).current_period_end) {
-                  periodEnd = new Date((subscription as any).current_period_end * 1000);
+                if (subscription.current_period_end) {
+                  periodEnd = new Date(subscription.current_period_end * 1000);
                 }
 
                 // Extract pricing details from subscription items
@@ -3516,24 +3571,12 @@ export class HTTPServer {
             // Get organization from customer ID
             const customerId = invoice.customer as string;
 
-            // Try to find org by stripe_customer_id first
-            let org = await orgDb.getOrganizationByStripeCustomerId(customerId);
-
-            // If not found, look up by workos_organization_id in Stripe customer metadata
-            if (!org) {
-              logger.info({ customerId, invoiceId: invoice.id }, 'Org not found by customer ID, checking Stripe metadata');
-              const customer = await stripe.customers.retrieve(customerId) as Stripe.Customer;
-              const workosOrgId = customer.metadata?.workos_organization_id;
-
-              if (workosOrgId) {
-                org = await orgDb.getOrganization(workosOrgId);
-                if (org) {
-                  // Link the Stripe customer ID to the organization
-                  await orgDb.setStripeCustomerId(workosOrgId, customerId);
-                  logger.info({ workosOrgId, customerId }, 'Linked Stripe customer to organization from invoice webhook');
-                }
-              }
-            }
+            let org = await resolveOrgForStripeCustomer({
+              customerId,
+              stripe,
+              orgDb,
+              invoice,
+            });
 
             if (!org) {
               logger.warn({
@@ -4008,10 +4051,10 @@ export class HTTPServer {
               // Ensure the Stripe customer has org metadata so that subsequent
               // subscription and invoice webhooks can find the org.
               try {
-                const customer = await stripe.customers.retrieve(customerId);
-                if ('deleted' in customer && customer.deleted) {
+                const customerRaw = await stripe.customers.retrieve(customerId) as Stripe.Customer | Stripe.DeletedCustomer;
+                if ('deleted' in customerRaw && customerRaw.deleted) {
                   logger.warn({ customerId, workosOrgId }, 'Stripe customer was deleted, cannot update metadata');
-                } else if (!customer.metadata?.workos_organization_id) {
+                } else if (!(customerRaw as Stripe.Customer).metadata?.workos_organization_id) {
                   await stripe.customers.update(customerId, {
                     metadata: { workos_organization_id: workosOrgId },
                   });
@@ -4035,25 +4078,34 @@ export class HTTPServer {
       }
     });
 
-    // Manage routes — kitchen cabinet + admin
-    this.app.get('/manage', requireAuth, requireManage, (req, res) =>
-      this.serveHtmlWithConfig(req, res, 'manage.html'));
-    this.app.get('/manage/referrals', requireAuth, requireManage, (req, res) =>
-      this.serveHtmlWithConfig(req, res, 'manage-referrals.html'));
-    this.app.get('/manage/prospects', requireAuth, (req, res) => res.redirect(301, '/manage/accounts'));
-    this.app.get('/manage/accounts', requireAuth, requireManage, (req, res) =>
-      this.serveHtmlWithConfig(req, res, 'manage-accounts.html'));
-    this.app.get('/manage/accounts/:orgId', requireAuth, requireManage, (req, res) =>
+    // Admin sub-pages (accounts, referrals, analytics, geo)
+    this.app.get('/admin/referrals', requireAuth, requireAdmin, (req, res) =>
+      this.serveHtmlWithConfig(req, res, 'admin-referrals.html'));
+    this.app.get('/admin/prospects', requireAuth, requireAdmin, (req, res) => res.redirect(301, '/admin/accounts'));
+    this.app.get('/admin/accounts', requireAuth, requireAdmin, (req, res) =>
+      this.serveHtmlWithConfig(req, res, 'admin-accounts.html'));
+    this.app.get('/admin/accounts/:orgId', requireAuth, requireAdmin, (req, res) =>
       this.serveHtmlWithConfig(req, res, 'admin-account-detail.html'));
-    this.app.get('/manage/analytics', requireAuth, requireManage, (req, res) =>
-      this.serveHtmlWithConfig(req, res, 'manage-analytics.html'));
-    this.app.get('/manage/geo', requireAuth, requireManage, (req, res) =>
-      this.serveHtmlWithConfig(req, res, 'manage-geo.html'));
+    this.app.get('/admin/analytics', requireAuth, requireAdmin, (req, res) =>
+      this.serveHtmlWithConfig(req, res, 'admin-analytics.html'));
+    this.app.get('/admin/geo', requireAuth, requireAdmin, (req, res) =>
+      this.serveHtmlWithConfig(req, res, 'admin-geo.html'));
 
-    // Redirect moved admin pages to their new /manage paths
-    this.app.get('/admin/prospects', (req, res) => res.redirect(301, '/manage/accounts'));
-    this.app.get('/admin/analytics', (req, res) => res.redirect(302, '/manage/analytics'));
-    this.app.get('/admin/geo', (req, res) => res.redirect(301, '/manage/geo'));
+    // Redirects from old /manage paths (preserve query strings)
+    const manageRedirect = (target: string) => (req: express.Request, res: express.Response) => {
+      const qs = req.originalUrl.split('?')[1];
+      res.redirect(301, target + (qs ? '?' + qs : ''));
+    };
+    this.app.get('/manage', manageRedirect('/admin'));
+    this.app.get('/manage/referrals', manageRedirect('/admin/referrals'));
+    this.app.get('/manage/prospects', manageRedirect('/admin/accounts'));
+    this.app.get('/manage/accounts/:orgId', (req, res) => {
+      const qs = req.originalUrl.split('?')[1];
+      res.redirect(301, `/admin/accounts/${req.params.orgId}` + (qs ? '?' + qs : ''));
+    });
+    this.app.get('/manage/accounts', manageRedirect('/admin/accounts'));
+    this.app.get('/manage/analytics', manageRedirect('/admin/analytics'));
+    this.app.get('/manage/geo', manageRedirect('/admin/geo'));
 
     // Admin routes
     // GET /admin - Admin landing page
@@ -4139,7 +4191,6 @@ export class HTTPServer {
         logger.error({ err: error }, 'Get audit logs error:');
         res.status(500).json({
           error: 'Failed to get audit logs',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -4158,7 +4209,6 @@ export class HTTPServer {
         logger.error({ err: error }, 'Get all agreements error:');
         res.status(500).json({
           error: 'Failed to get agreements',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -4196,7 +4246,6 @@ export class HTTPServer {
         logger.error({ err: error }, 'Create agreement error:');
         res.status(500).json({
           error: 'Failed to create agreement',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -4243,7 +4292,6 @@ export class HTTPServer {
         logger.error({ err: error }, 'Update agreement error:');
         res.status(500).json({
           error: 'Failed to update agreement',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -4316,13 +4364,12 @@ export class HTTPServer {
         logger.error({ err: error }, 'Admin record agreement error');
         res.status(500).json({
           error: 'Failed to record agreement',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
 
     // GET /api/admin/analytics-data - Get simple analytics data from views
-    this.app.get('/api/admin/analytics-data', requireAuth, requireManage, async (req, res) => {
+    this.app.get('/api/admin/analytics-data', requireAuth, requireAdmin, async (req, res) => {
       try {
         const pool = getPool();
         // Query all analytics views
@@ -4433,8 +4480,8 @@ export class HTTPServer {
       }
     });
 
-    // GET /api/admin/referrals - Aggregate referral activity for manage tier
-    this.app.get('/api/admin/referrals', requireAuth, requireManage, async (_req, res) => {
+    // GET /api/admin/referrals - Aggregate referral activity
+    this.app.get('/api/admin/referrals', requireAuth, requireAdmin, async (_req, res) => {
       try {
         const rows = await listAllReferralCodes();
         res.json(rows);
@@ -4677,7 +4724,6 @@ export class HTTPServer {
         logger.error({ err: error }, 'Error during revenue backfill');
         res.status(500).json({
           error: 'Internal server error',
-          message: error instanceof Error ? error.message : 'Revenue backfill failed',
         });
       }
     });
@@ -4723,17 +4769,21 @@ export class HTTPServer {
 
         // Get all published perspectives
         const perspectivesResult = await pool.query(
-          `SELECT slug, updated_at, published_at
-           FROM perspectives
-           WHERE status = 'published'
-           ORDER BY published_at DESC`
+          `SELECT p.slug, p.updated_at, p.published_at
+           FROM perspectives p
+           LEFT JOIN working_groups wg ON wg.id = p.working_group_id
+           WHERE p.status = 'published'
+             AND (p.working_group_id IS NULL OR wg.slug = 'editorial')
+           ORDER BY p.published_at DESC`
         );
 
         // Static pages with their priorities and change frequencies
         const staticPages = [
           { path: '/', priority: '1.0', changefreq: 'weekly' },
-          { path: '/perspectives', priority: '0.9', changefreq: 'daily' },
-          { path: '/working-groups', priority: '0.8', changefreq: 'weekly' },
+          { path: '/stories', priority: '0.9', changefreq: 'daily' },
+          { path: '/registry', priority: '0.8', changefreq: 'weekly' },
+          { path: '/policies', priority: '0.7', changefreq: 'weekly' },
+          { path: '/committees', priority: '0.8', changefreq: 'weekly' },
           { path: '/members', priority: '0.8', changefreq: 'weekly' },
           { path: '/join', priority: '0.7', changefreq: 'monthly' },
         ];
@@ -4797,19 +4847,25 @@ Disallow: /api/admin/
     // Public Perspectives API Routes
     // ========================================
 
-    // GET /api/perspectives - List published perspectives (excludes working group posts)
+    // GET /api/perspectives - List published perspectives (excludes private working group posts and RSS)
+    // Includes editorial working group content (site-wide perspectives) and unassigned content.
+    // ?authored=true filters to only authored content (excludes RSS and email feed articles)
     this.app.get('/api/perspectives', async (req, res) => {
       try {
         const pool = getPool();
+        const authored = req.query.authored === 'true';
         const result = await pool.query(
           `SELECT
-            id, slug, content_type, title, subtitle, category, excerpt,
-            external_url, external_site_name,
-            author_name, author_title, featured_image_url,
-            published_at, display_order, tags, like_count
-          FROM perspectives
-          WHERE status = 'published' AND working_group_id IS NULL
-          ORDER BY published_at DESC NULLS LAST`
+            p.id, p.slug, p.content_type, p.title, p.subtitle, p.category, p.excerpt,
+            p.external_url, p.external_site_name,
+            p.author_name, p.author_title, p.featured_image_url,
+            p.published_at, p.display_order, p.tags, p.like_count
+          FROM perspectives p
+          LEFT JOIN working_groups wg ON wg.id = p.working_group_id
+          WHERE p.status = 'published'
+            AND (p.working_group_id IS NULL OR wg.slug = 'editorial')
+            ${authored ? "AND (p.source_type IS NULL OR p.source_type NOT IN ('rss', 'email'))" : ''}
+          ORDER BY p.published_at DESC NULLS LAST`
         );
 
         res.json(result.rows);
@@ -4817,7 +4873,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Get published perspectives error:');
         res.status(500).json({
           error: 'Failed to get perspectives',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -4829,12 +4884,14 @@ Disallow: /api/admin/
         const pool = getPool();
         const result = await pool.query(
           `SELECT
-            id, slug, content_type, title, subtitle, category, excerpt,
-            content, external_url, external_site_name,
-            author_name, author_title, featured_image_url,
-            published_at, tags, metadata, like_count, updated_at
-          FROM perspectives
-          WHERE slug = $1 AND status = 'published'`,
+            p.id, p.slug, p.content_type, p.title, p.subtitle, p.category, p.excerpt,
+            p.content, p.external_url, p.external_site_name,
+            p.author_name, p.author_title, p.featured_image_url,
+            p.published_at, p.tags, p.metadata, p.like_count, p.updated_at
+          FROM perspectives p
+          LEFT JOIN working_groups wg ON wg.id = p.working_group_id
+          WHERE p.slug = $1 AND p.status = 'published'
+            AND (p.working_group_id IS NULL OR wg.slug = 'editorial')`,
           [slug]
         );
 
@@ -4850,7 +4907,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Get perspective by slug error:');
         res.status(500).json({
           error: 'Failed to get perspective',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -4910,7 +4966,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Add perspective like error:');
         res.status(500).json({
           error: 'Failed to add like',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -4951,7 +5006,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Remove perspective like error:');
         res.status(500).json({
           error: 'Failed to remove like',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -5090,7 +5144,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Login redirect error:');
         res.status(500).json({
           error: 'Failed to initiate login',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -5184,12 +5237,12 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Signup redirect error:');
         res.status(500).json({
           error: 'Failed to initiate signup',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
 
     // GET /auth/callback - Handle OAuth callback from WorkOS
+    // codeql[js/user-controlled-bypass] - OAuth callback must read authorization code from query params
     this.app.get('/auth/callback', async (req, res) => {
       const code = req.query.code as string;
       const state = req.query.state as string;
@@ -5327,6 +5380,19 @@ Disallow: /api/admin/
           }).catch((err) => {
             logger.error({ error: err, userId: user.id }, 'Failed to record user login');
           });
+
+          // Update relationship model from web login (fire and forget)
+          relationshipDb.resolvePersonId({ workos_user_id: user.id, email: user.email })
+            .then(async (personId) => {
+              await personEvents.recordEvent(personId, 'account_linked', {
+                channel: 'web',
+                data: { workos_user_id: user.id },
+              });
+              await relationshipDb.evaluateStageTransitions(personId);
+            })
+            .catch((err) => {
+              logger.warn({ error: err, userId: user.id }, 'Failed to update relationship from web login');
+            });
         }
 
         // Send welcome email to first-time users (async, don't block auth flow)
@@ -5378,10 +5444,22 @@ Disallow: /api/admin/
         if (state) {
           try {
             const parsedState = JSON.parse(state);
-            returnTo = parsedState.return_to || returnTo;
+            const candidateReturnTo = parsedState.return_to || returnTo;
+            // Validate returnTo is a relative path or an allowed AdCP URL to prevent open redirect
+            if ((candidateReturnTo.startsWith('/') && !candidateReturnTo.startsWith('//')) || HTTPServer.isAllowedAdcpUrl(candidateReturnTo)) {
+              returnTo = candidateReturnTo;
+            } else {
+              logger.warn({ returnTo: candidateReturnTo }, 'Blocked invalid return_to from OAuth state');
+            }
             slackUserIdToLink = parsedState.slack_user_id;
             isNativeMode = parsedState.native === true;
-            nativeRedirectUri = parsedState.native_redirect_uri || nativeRedirectUri;
+            const candidateNativeUri = parsedState.native_redirect_uri || nativeRedirectUri;
+            const ALLOWED_NATIVE_SCHEMES = ['addie://'];
+            if (ALLOWED_NATIVE_SCHEMES.some(scheme => candidateNativeUri.startsWith(scheme))) {
+              nativeRedirectUri = candidateNativeUri;
+            } else if (candidateNativeUri !== nativeRedirectUri) {
+              logger.warn({ nativeRedirectUri: candidateNativeUri }, 'Blocked invalid native_redirect_uri from OAuth state');
+            }
             logger.debug({ parsedState, returnTo, slackUserIdToLink, isNativeMode }, 'Parsed state successfully');
           } catch (e) {
             // Invalid state, use default
@@ -5425,24 +5503,18 @@ Disallow: /api/admin/
                 'Auto-linked Slack account after signup'
               );
 
-              // Track this as an outreach conversion if there was pending outreach
+              // Record account linking in the relationship system
               try {
-                const insightsDb = new InsightsDatabase();
-                const pendingOutreach = await insightsDb.getPendingOutreach(slackUserIdToLink);
-                if (pendingOutreach) {
-                  // Mark as converted - they clicked the link and completed account linking
-                  await insightsDb.markOutreachConverted(
-                    pendingOutreach.id,
-                    'Converted via link click - account linked'
-                  );
-                  logger.info({
-                    slackUserId: slackUserIdToLink,
-                    outreachId: pendingOutreach.id,
-                    outreachType: pendingOutreach.outreach_type,
-                  }, 'Recorded outreach conversion from link click');
-                }
+                const { resolvePersonId } = await import('./db/relationship-db.js');
+                const { recordEvent } = await import('./db/person-events-db.js');
+                const personId = await resolvePersonId({ slack_user_id: slackUserIdToLink, workos_user_id: user.id });
+                await recordEvent(personId, 'account_linked', {
+                  channel: 'web',
+                  data: { workos_user_id: user.id },
+                });
+                logger.info({ slackUserId: slackUserIdToLink, personId }, 'Recorded account_linked event');
               } catch (trackingError) {
-                logger.warn({ error: trackingError, slackUserId: slackUserIdToLink }, 'Failed to track outreach conversion');
+                logger.warn({ error: trackingError, slackUserId: slackUserIdToLink }, 'Failed to record account_linked event');
               }
 
               // Send proactive Addie message if user has a recent conversation
@@ -5471,13 +5543,7 @@ Disallow: /api/admin/
               );
             }
 
-            // Mark any pending Link Account outreach goals as succeeded so Addie stops re-sending
             if (accountLinked) {
-              try {
-                await markLinkAccountGoalsSucceeded(slackUserIdToLink);
-              } catch (historyError) {
-                logger.warn({ error: historyError, slackUserId: slackUserIdToLink }, 'Failed to mark Link Account goal as success');
-              }
               invalidateMemberContextCache(slackUserIdToLink);
             }
           } catch (linkError) {
@@ -5499,13 +5565,7 @@ Disallow: /api/admin/
                   'Email-based auto-link on login'
                 );
 
-                // Mark any pending "Link Account" goals as succeeded
                 if (linkResult.slack_user_id) {
-                  try {
-                    await markLinkAccountGoalsSucceeded(linkResult.slack_user_id);
-                  } catch (historyError) {
-                    logger.warn({ error: historyError, slackUserId: linkResult.slack_user_id }, 'Failed to mark Link Account goal as success after email auto-link');
-                  }
                   invalidateMemberContextCache(linkResult.slack_user_id);
                 }
               }
@@ -5536,13 +5596,13 @@ Disallow: /api/admin/
             return res.type('html').send(html);
           }
           logger.debug({ returnTo }, 'Redirecting authenticated user');
-          res.redirect(returnTo);
+          // CodeQL: returnTo validated as relative path or allowed AdCP URL above
+          res.redirect(returnTo); // lgtm[js/server-side-unvalidated-url-redirection]
         }
       } catch (error) {
         logger.error({ err: error }, 'Auth callback error:');
         res.status(500).json({
           error: 'Authentication failed',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -5551,6 +5611,7 @@ Disallow: /api/admin/
     // GET /auth/logout - Clear session and redirect
     this.app.get('/auth/logout', async (req, res) => {
       // Dev mode: clear dev-session cookie and redirect to home
+      // codeql[js/user-controlled-bypass] - dev mode check uses server-side env var, not user input
       if (isDevModeEnabled()) {
         logger.debug('Dev mode logout - clearing dev session cookie');
         res.clearCookie(getDevSessionCookieName(), {
@@ -5655,8 +5716,15 @@ Disallow: /api/admin/
     this.app.post('/auth/bridge-callback', express.urlencoded({ extended: false }), (req, res) => {
       // CSRF protection: verify the form POST originated from AAO
       const origin = req.get('origin') || '';
-      if (origin && !origin.endsWith('agenticadvertising.org')) {
-        return res.status(403).send('Invalid origin');
+      if (origin) {
+        try {
+          const parsed = new URL(origin);
+          if (parsed.hostname !== 'agenticadvertising.org' && !parsed.hostname.endsWith('.agenticadvertising.org')) {
+            return res.status(403).send('Invalid origin');
+          }
+        } catch {
+          return res.status(403).send('Invalid origin');
+        }
       }
 
       const returnTo = req.query.return_to as string || '/';
@@ -5685,7 +5753,8 @@ Disallow: /api/admin/
         maxAge: HTTPServer.BRIDGE_CHECK_TTL,
       });
 
-      res.redirect(returnTo);
+      // CodeQL: returnTo validated by isAllowedAdcpUrl check above
+      res.redirect(returnTo); // lgtm[js/server-side-unvalidated-url-redirection]
     });
 
     // GET /auth/bridge-callback - Handles no-session case (redirect back from bridge without session)
@@ -5704,7 +5773,8 @@ Disallow: /api/admin/
         maxAge: HTTPServer.BRIDGE_CHECK_TTL,
       });
 
-      res.redirect(returnTo);
+      // CodeQL: returnTo validated by isAllowedAdcpUrl check above
+      res.redirect(returnTo); // lgtm[js/server-side-unvalidated-url-redirection]
     });
 
     // GET /api/me - Get current user info
@@ -5742,7 +5812,6 @@ Disallow: /api/admin/
               first_name: user.firstName,
               last_name: user.lastName,
               isAdmin: devUser.isAdmin,
-              isManage: devUser.isManage || devUser.isAdmin,
             },
             organizations,
             // Include dev mode info for debugging
@@ -5759,6 +5828,7 @@ Disallow: /api/admin/
         // Get user's WorkOS organization memberships
         const memberships = await workos!.userManagement.listOrganizationMemberships({
           userId: user.id,
+          statuses: ['active'],
         });
 
         // Map memberships to organization details with roles
@@ -5772,7 +5842,6 @@ Disallow: /api/admin/
             return {
               id: membership.organizationId,
               name: workosOrg.name,
-              // Access role from the membership's role object
               role: membership.role?.slug || 'member',
               status: membership.status,
               is_personal: localOrg?.is_personal || false,
@@ -5783,14 +5852,17 @@ Disallow: /api/admin/
         // Check if user is admin
         const adminEmails = process.env.ADMIN_EMAILS?.split(',').map(e => e.trim().toLowerCase()) || [];
         const isAdmin = adminEmails.includes(user.email.toLowerCase());
-        const isManage = isAdmin || await isWebUserAAOCouncil(user.id);
-
-        // Check Slack sync status
+        // Check Slack sync status and seat type
         let isLinkedToSlack = false;
+        let seatType: SeatType | null = null;
         try {
           const slackDb = new SlackDatabase();
-          const slackMapping = await slackDb.getByWorkosUserId(user.id);
+          const [slackMapping, userSeatType] = await Promise.all([
+            slackDb.getByWorkosUserId(user.id),
+            getUserSeatType(user.id),
+          ]);
           isLinkedToSlack = !!slackMapping?.slack_user_id;
+          seatType = userSeatType;
         } catch {
           // Default to not linked if lookup fails
         }
@@ -5803,8 +5875,8 @@ Disallow: /api/admin/
             first_name: user.firstName,
             last_name: user.lastName,
             isAdmin,
-            isManage,
             isLinkedToSlack,
+            seat_type: seatType,
           },
           organizations,
         };
@@ -5823,7 +5895,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Get current user error:');
         res.status(500).json({
           error: 'Failed to get user info',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -5890,7 +5961,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Get user agreements error:');
         res.status(500).json({
           error: 'Failed to get agreement history',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -5936,7 +6006,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Accept agreement error');
         res.status(500).json({
           error: 'Failed to accept agreement',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -5962,7 +6031,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'GET /api/me/addie-home error');
         res.status(500).json({
           error: 'Failed to get Addie home content',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -6009,7 +6077,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Get user invitations error:');
         res.status(500).json({
           error: 'Failed to get invitations',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -6051,7 +6118,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Accept invitation error:');
         res.status(500).json({
           error: 'Failed to accept invitation',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -6143,7 +6209,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Get joinable organizations error:');
         res.status(500).json({
           error: 'Failed to get joinable organizations',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -6191,6 +6256,7 @@ Disallow: /api/admin/
             // If org has no admin/owner yet, promote this user to owner
             const existingMembers = await workos!.userManagement.listOrganizationMemberships({
               organizationId: organization_id,
+              statuses: ['active', 'inactive', 'pending'],
               limit: 100,
             });
             const hasAdmin = existingMembers.data.some((m) => {
@@ -6322,6 +6388,7 @@ Disallow: /api/admin/
         // Check if org has any existing members
         const orgMemberships = await workos!.userManagement.listOrganizationMemberships({
           organizationId: organization_id,
+          statuses: ['active', 'inactive', 'pending'],
         });
 
         // If org has no members (e.g., prospect org) AND user's email domain matches,
@@ -6440,7 +6507,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Create join request error:');
         res.status(500).json({
           error: 'Failed to create join request',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -6473,7 +6539,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Cancel join request error:');
         res.status(500).json({
           error: 'Failed to cancel join request',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -6509,7 +6574,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Get agreement error:');
         res.status(500).json({
           error: 'Failed to get agreement',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -6521,6 +6585,12 @@ Disallow: /api/admin/
         const version = req.query.version as string;
         const format = req.query.format as string; // 'json' or 'html' (default: html)
 
+        // Serve the page shell for non-JSON requests; it fetches content client-side
+        if (format !== 'json') {
+          return await this.serveHtmlWithConfig(req, res, 'agreement.html');
+        }
+
+        // JSON API: validate params and return agreement data
         if (!type) {
           return res.status(400).json({
             error: 'Missing parameters',
@@ -6535,7 +6605,6 @@ Disallow: /api/admin/
           });
         }
 
-        // If version is provided, get that specific version, otherwise get current
         const agreement = version
           ? await orgDb.getAgreementByTypeAndVersion(type, version)
           : await orgDb.getCurrentAgreementByType(type);
@@ -6549,100 +6618,20 @@ Disallow: /api/admin/
           });
         }
 
-        // Return JSON if explicitly requested
-        if (format === 'json') {
-          return res.json({
-            version: agreement.version,
-            type: type,
-            text: agreement.text,
-            effective_date: agreement.effective_date,
-          });
-        }
-
-        // Otherwise render as HTML
         const { marked } = await import('marked');
         const htmlContent = await marked(agreement.text);
 
-        const typeLabels: Record<string, string> = {
-          terms_of_service: 'Terms of Use',
-          privacy_policy: 'Privacy Policy',
-          membership: 'Membership Agreement'
-        };
-
-        const html = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${typeLabels[type]} - AdCP Registry</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #f5f5f5;
-      padding: 40px 20px;
-      line-height: 1.6;
-      color: #333;
-    }
-    .container {
-      max-width: 800px;
-      margin: 0 auto;
-      background: white;
-      padding: 40px;
-      border-radius: 8px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    h1 {
-      color: #2d3748;
-      margin-bottom: 10px;
-    }
-    .meta {
-      color: #666;
-      font-size: 14px;
-      margin-bottom: 30px;
-      padding-bottom: 20px;
-      border-bottom: 2px solid #e0e0e0;
-    }
-    .content h1 { margin-top: 30px; margin-bottom: 15px; font-size: 24px; }
-    .content h2 { margin-top: 30px; margin-bottom: 15px; font-size: 20px; }
-    .content h3 { margin-top: 25px; margin-bottom: 10px; font-size: 18px; }
-    .content p { margin-bottom: 15px; }
-    .content ul, .content ol { margin-bottom: 15px; padding-left: 30px; }
-    .content li { margin-bottom: 8px; }
-    .back-link {
-      display: inline-block;
-      margin-top: 30px;
-      color: #667eea;
-      text-decoration: none;
-    }
-    .back-link:hover {
-      text-decoration: underline;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>${typeLabels[type]}</h1>
-    <div class="meta">
-      Version ${agreement.version} • Effective Date: ${new Date(agreement.effective_date).toLocaleDateString()}
-    </div>
-    <div class="content">
-      ${htmlContent}
-    </div>
-    <a href="javascript:window.close()" class="back-link">← Close</a>
-  </div>
-</body>
-</html>
-        `;
-
-        res.setHeader('Content-Type', 'text/html');
-        res.send(html);
+        return res.json({
+          version: agreement.version,
+          type: type,
+          text: agreement.text,
+          html: htmlContent,
+          effective_date: agreement.effective_date,
+        });
       } catch (error) {
         logger.error({ err: error }, 'Get agreement error:');
         res.status(500).json({
           error: 'Failed to get agreement',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -6701,7 +6690,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Create API key error:');
         res.status(500).json({
           error: 'Failed to create API key',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -6731,7 +6719,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'List API keys error:');
         res.status(500).json({
           error: 'Failed to list API keys',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -6772,7 +6759,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Revoke API key error:');
         res.status(500).json({
           error: 'Failed to revoke API key',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -6799,21 +6785,11 @@ Disallow: /api/admin/
           if (profile.primary_brand_domain) {
             const hosted = await this.brandDb.getHostedBrandByDomain(profile.primary_brand_domain);
             if (hosted) {
-              const bj = hosted.brand_json as Record<string, unknown>;
-              const brands = bj.brands as Array<Record<string, unknown>> | undefined;
-              const primaryBrand = brands?.[0];
-              const logos = (primaryBrand?.logos ?? bj.logos) as Array<Record<string, unknown>> | undefined;
-              const colors = (primaryBrand?.colors ?? bj.colors) as Record<string, unknown> | undefined;
-              profile.resolved_brand = { domain: profile.primary_brand_domain, logo_url: logos?.[0]?.url as string | undefined, brand_color: colors?.primary as string | undefined, verified: hosted.domain_verified };
+              profile.resolved_brand = resolveBrandFromJson(profile.primary_brand_domain, hosted.brand_json as Record<string, unknown>, hosted.domain_verified);
             } else {
               const discovered = await this.brandDb.getDiscoveredBrandByDomain(profile.primary_brand_domain);
-              if (discovered) {
-                const manifest = discovered.brand_manifest as Record<string, unknown> | undefined;
-                const brands = manifest?.brands as Array<Record<string, unknown>> | undefined;
-                const primaryBrand = brands?.[0];
-                const logos = (primaryBrand?.logos ?? manifest?.logos) as Array<Record<string, unknown>> | undefined;
-                const colors = (primaryBrand?.colors ?? manifest?.colors) as Record<string, unknown> | undefined;
-                profile.resolved_brand = { domain: profile.primary_brand_domain, logo_url: logos?.[0]?.url as string | undefined, brand_color: colors?.primary as string | undefined, verified: true };
+              if (discovered?.brand_manifest) {
+                profile.resolved_brand = resolveBrandFromJson(profile.primary_brand_domain, discovered.brand_manifest as Record<string, unknown>, true);
               }
             }
           }
@@ -6829,7 +6805,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'List members error');
         res.status(500).json({
           error: 'Failed to list members',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -6840,25 +6815,16 @@ Disallow: /api/admin/
         const profiles = await memberDb.getCarouselProfiles();
 
         // Resolve brand data for carousel profiles
+        // codeql[js/user-controlled-bypass] - brand domains come from server-side DB, not user input
         await Promise.all(profiles.map(async (profile) => {
           if (profile.primary_brand_domain) {
             const hosted = await this.brandDb.getHostedBrandByDomain(profile.primary_brand_domain);
             if (hosted) {
-              const bj = hosted.brand_json as Record<string, unknown>;
-              const brands = bj.brands as Array<Record<string, unknown>> | undefined;
-              const primaryBrand = brands?.[0];
-              const logos = (primaryBrand?.logos ?? bj.logos) as Array<Record<string, unknown>> | undefined;
-              const colors = (primaryBrand?.colors ?? bj.colors) as Record<string, unknown> | undefined;
-              profile.resolved_brand = { domain: profile.primary_brand_domain, logo_url: logos?.[0]?.url as string | undefined, brand_color: colors?.primary as string | undefined, verified: hosted.domain_verified };
+              profile.resolved_brand = resolveBrandFromJson(profile.primary_brand_domain, hosted.brand_json as Record<string, unknown>, hosted.domain_verified);
             } else {
               const discovered = await this.brandDb.getDiscoveredBrandByDomain(profile.primary_brand_domain);
-              if (discovered) {
-                const manifest = discovered.brand_manifest as Record<string, unknown> | undefined;
-                const brands = manifest?.brands as Array<Record<string, unknown>> | undefined;
-                const primaryBrand = brands?.[0];
-                const logos = (primaryBrand?.logos ?? manifest?.logos) as Array<Record<string, unknown>> | undefined;
-                const colors = (primaryBrand?.colors ?? manifest?.colors) as Record<string, unknown> | undefined;
-                profile.resolved_brand = { domain: profile.primary_brand_domain, logo_url: logos?.[0]?.url as string | undefined, brand_color: colors?.primary as string | undefined, verified: true };
+              if (discovered?.brand_manifest) {
+                profile.resolved_brand = resolveBrandFromJson(profile.primary_brand_domain, discovered.brand_manifest as Record<string, unknown>, true);
               }
             }
           }
@@ -6869,7 +6835,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Get carousel members error');
         res.status(500).json({
           error: 'Failed to get carousel members',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -6964,21 +6929,11 @@ Disallow: /api/admin/
         if (profile.primary_brand_domain) {
           const hostedBrand = await this.brandDb.getHostedBrandByDomain(profile.primary_brand_domain);
           if (hostedBrand) {
-            const bj = hostedBrand.brand_json as Record<string, unknown>;
-            const brands = bj.brands as Array<Record<string, unknown>> | undefined;
-            const primaryBrand = brands?.[0];
-            const logos = (primaryBrand?.logos ?? bj.logos) as Array<Record<string, unknown>> | undefined;
-            const colors = (primaryBrand?.colors ?? bj.colors) as Record<string, unknown> | undefined;
-            profile.resolved_brand = { domain: profile.primary_brand_domain, logo_url: logos?.[0]?.url as string | undefined, brand_color: colors?.primary as string | undefined, verified: hostedBrand.domain_verified };
+            profile.resolved_brand = resolveBrandFromJson(profile.primary_brand_domain, hostedBrand.brand_json as Record<string, unknown>, hostedBrand.domain_verified);
           } else {
             const discovered = await this.brandDb.getDiscoveredBrandByDomain(profile.primary_brand_domain);
-            if (discovered) {
-              const manifest = discovered.brand_manifest as Record<string, unknown> | undefined;
-              const brands = manifest?.brands as Array<Record<string, unknown>> | undefined;
-              const primaryBrand = brands?.[0];
-              const logos = (primaryBrand?.logos ?? manifest?.logos) as Array<Record<string, unknown>> | undefined;
-              const colors = (primaryBrand?.colors ?? manifest?.colors) as Record<string, unknown> | undefined;
-              profile.resolved_brand = { domain: profile.primary_brand_domain, logo_url: logos?.[0]?.url as string | undefined, brand_color: colors?.primary as string | undefined, verified: true };
+            if (discovered?.brand_manifest) {
+              profile.resolved_brand = resolveBrandFromJson(profile.primary_brand_domain, discovered.brand_manifest as Record<string, unknown>, true);
             }
           }
         }
@@ -6987,6 +6942,7 @@ Disallow: /api/admin/
         let credentials: { credential_id: string; credential_name: string; tier: number; awarded_at: string }[] = [];
         try {
           const { getOrgMemberCredentials } = await import('./db/certification-db.js');
+          // codeql[js/user-controlled-bypass] - org ID comes from server-side DB profile, not user input
           credentials = await getOrgMemberCredentials(profile.workos_organization_id);
         } catch { /* credentials optional */ }
 
@@ -6995,7 +6951,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Get member error');
         res.status(500).json({
           error: 'Failed to get member',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -7176,7 +7131,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Check slug error');
         res.status(500).json({
           error: 'Failed to check slug availability',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -7287,7 +7241,6 @@ Disallow: /api/admin/
 
         return res.status(500).json({
           error: 'Agent discovery failed',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -7321,7 +7274,6 @@ Disallow: /api/admin/
         logger.error({ err: error }, 'Failed to list public publishers');
         return res.status(500).json({
           error: 'Failed to list publishers',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -7355,7 +7307,6 @@ Disallow: /api/admin/
 
         return res.status(500).json({
           error: 'Publisher validation failed',
-          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
@@ -7389,6 +7340,7 @@ Disallow: /api/admin/
       throw new Error("DATABASE_URL or DATABASE_PRIVATE_URL environment variable is required");
     }
     initializeDatabase(dbConfig);
+
     await runMigrations();
 
     // Sync organizations from WorkOS and Stripe to local database (dev environment support)
@@ -7448,10 +7400,6 @@ Disallow: /api/admin/
     jobScheduler.startAll();
 
     // Stop jobs that require missing env vars
-    if (!process.env.MOLTBOOK_API_KEY) {
-      jobScheduler.stop(JOB_NAMES.MOLTBOOK_POSTER);
-      jobScheduler.stop(JOB_NAMES.MOLTBOOK_ENGAGEMENT);
-    }
     if (!process.env.LLMPULSE_API_KEY) {
       jobScheduler.stop(JOB_NAMES.GEO_MONITOR);
       jobScheduler.stop(JOB_NAMES.GEO_SNAPSHOT);
@@ -7482,6 +7430,19 @@ Disallow: /api/admin/
 
     process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
     process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
+    process.on("uncaughtException", (err) => {
+      logger.fatal({ err }, "Uncaught exception — shutting down");
+      // Give PostHog/OTel time to flush before exiting
+      setTimeout(() => process.exit(1), 2000);
+    });
+
+    process.on("unhandledRejection", (reason) => {
+      logger.fatal(
+        { err: reason instanceof Error ? reason : new Error(String(reason)) },
+        "Unhandled promise rejection"
+      );
+    });
   }
 
   /**
@@ -7546,4 +7507,3 @@ Disallow: /api/admin/
     );
   }
 }
-

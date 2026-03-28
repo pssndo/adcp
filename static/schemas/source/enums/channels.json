@@ -23,7 +23,8 @@
     "retail_media",
     "influencer",
     "affiliate",
-    "product_placement"
+    "product_placement",
+    "sponsored_intelligence"
   ],
   "enumDescriptions": {
     "display": "Digital display advertising (banners, native, rich media) across web and app",
@@ -44,6 +45,7 @@
     "retail_media": "Retail media networks and commerce marketplaces (Amazon, Walmart, Instacart)",
     "influencer": "Creator and influencer marketing partnerships",
     "affiliate": "Affiliate networks, comparison sites, and performance-based partnerships",
-    "product_placement": "Product placement, branded content, and sponsorship integrations"
+    "product_placement": "Product placement, branded content, and sponsorship integrations",
+    "sponsored_intelligence": "Sponsored Intelligence — advertising within AI assistants, AI search, and generative AI experiences via the reversed data flow"
   }
 }

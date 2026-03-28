@@ -1,7 +1,8 @@
 ---
 title: "Publisher / seller track"
 sidebarTitle: Publisher track
-description: Build and operate an AdCP sales agent. Product catalog design, creative specifications, measurement, reporting, and a build project.
+description: "AdCP publisher track (B1-B4): build and operate a sales agent. Product catalog design, creative specs, delivery reporting, and a sales agent build project."
+"og:title": "AdCP — Publisher / seller track"
 ---
 
 # Publisher / seller track (B1–B4)
@@ -20,7 +21,7 @@ Completing this track (plus A1–A3) earns the **AdCP practitioner** credential.
 
 **~20 min** | Prerequisite: A3
 
-How a hosted sales agent works: product discovery, catalog integration, capability advertising. Walkthrough of designing your product catalog and configuring what buyers can discover about you.
+How a hosted sales agent works: product discovery, catalog integration, capability advertising. Walkthrough of designing your product catalog — including collections and installments for content-centric inventory like podcasts, CTV series, and live events — and configuring what buyers can discover about you.
 
 ### Reading list
 
@@ -33,6 +34,9 @@ How a hosted sales agent works: product discovery, catalog integration, capabili
   </Card>
   <Card title="Media products" icon="cube" href="/docs/media-buy/product-discovery/media-products">
     How to structure products: formats, pricing, targeting, and availability.
+  </Card>
+  <Card title="Collections and installments" icon="tv" href="/docs/media-buy/product-discovery/collections-and-installments">
+    Model content-centric inventory: podcasts, CTV series, live events, and episodic content.
   </Card>
   <Card title="sync_catalogs task" icon="rotate" href="/docs/media-buy/task-reference/sync_catalogs">
     Catalog synchronization: 13 catalog types, feed field mappings.
@@ -48,11 +52,11 @@ How a hosted sales agent works: product discovery, catalog integration, capabili
 ### Key concepts
 
 - **Sales agent role** — your always-on, AI-powered sales team that responds to buyer queries
-- **Product catalog design** — products, formats, pricing models, targeting options, availability
+- **Product catalog design** — products, formats, pricing models, targeting options, availability, and shows/episodes for content-centric inventory
 - **Catalog integration** — `sync_catalogs` for product data, 13 catalog types, feed field mappings
 - **Capability advertising** — `get_adcp_capabilities` so buyers know what you support
 
-<Card title="Start B1 with Addie" icon="play" href="https://agenticadvertising.org/addie">
+<Card title="Start B1 with Addie" icon="play" href="https://agenticadvertising.org/chat">
   "I'd like to start certification module B1."
 </Card>
 
@@ -73,7 +77,7 @@ Deep dive on `list_creative_formats` and how buyer agents discover what your inv
   <Card title="Example briefs" icon="clipboard-list" href="/docs/media-buy/product-discovery/example-briefs">
     Real examples of product discovery queries from buyer agents.
   </Card>
-  <Card title="list_creative_formats task" icon="palette" href="/docs/media-buy/task-reference/list_creative_formats">
+  <Card title="list_creative_formats task" icon="palette" href="/docs/creative/task-reference/list_creative_formats">
     How creative format specifications work — dimensions, file types, render requirements.
   </Card>
   <Card title="Creative formats" icon="image" href="/docs/creative/formats">
@@ -94,7 +98,7 @@ Deep dive on `list_creative_formats` and how buyer agents discover what your inv
 - **Handling incoming creatives** — `sync_creatives` and `build_creative` validation and approval
 - **Brand compliance** — understanding incoming brand.json, disclosure positions
 
-<Card title="Start B2 with Addie" icon="play" href="https://agenticadvertising.org/addie">
+<Card title="Start B2 with Addie" icon="play" href="https://agenticadvertising.org/chat">
   "I'd like to start certification module B2."
 </Card>
 
@@ -141,10 +145,10 @@ How to expose delivery data, measurement signals, and optimization levers throug
 - **Signals framework** — `get_signals` and `activate_signal` replace fragmented measurement vendor integrations
 - **Audience handling** — `sync_audiences` for accepting buyer audience data
 - **Account management** — `sync_accounts`, `list_accounts` for managing buyer relationships
-- **Seller-side governance** — when a buyer account has `governance_agents`, call `check_governance` with binding `committed` before confirming media buys
+- **Seller-side governance** — when a buyer account has `governance_agents` (synced via [`sync_governance`](/docs/accounts/tasks/sync_governance)), call `check_governance` with binding `committed` before confirming media buys
 - **Planned delivery** — describe what you will actually deliver; the governance agent validates it against the buyer's plan
 
-<Card title="Start B3 with Addie" icon="play" href="https://agenticadvertising.org/addie">
+<Card title="Start B3 with Addie" icon="play" href="https://agenticadvertising.org/chat">
   "I'd like to start certification module B3."
 </Card>
 
@@ -178,7 +182,7 @@ Passing threshold: 70%.
 
 Any AI coding assistant is welcome (Claude, Cursor, Copilot, etc.). The skill tested is: "Can you specify correct AdCP behavior?"
 
-<Card title="Start B4 with Addie" icon="play" href="https://agenticadvertising.org/addie">
+<Card title="Start B4 with Addie" icon="play" href="https://agenticadvertising.org/chat">
   "I'd like to start certification module B4."
 </Card>
 

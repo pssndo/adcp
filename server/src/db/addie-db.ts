@@ -138,26 +138,6 @@ export interface RecentNewsResult {
   discovery_source: string | null;
 }
 
-export interface AddieApprovalQueueItem {
-  id: number;
-  action_type: string;
-  target_channel_id: string | null;
-  target_thread_ts: string | null;
-  target_user_id: string | null;
-  proposed_content: string;
-  trigger_type: string;
-  trigger_context: Record<string, unknown> | null;
-  status: 'pending' | 'approved' | 'rejected' | 'expired';
-  reviewed_by: string | null;
-  reviewed_at: Date | null;
-  edit_notes: string | null;
-  final_content: string | null;
-  executed_at: Date | null;
-  execution_result: Record<string, unknown> | null;
-  created_at: Date;
-  expires_at: Date | null;
-}
-
 export interface AddieInteractionStats {
   total: number;
   flagged: number;
@@ -370,108 +350,6 @@ export interface AddieInteractionWithRating extends AddieInteractionLog {
   experiment_group?: 'control' | 'variant';
 }
 
-// ============== Insight Synthesis Types ==============
-
-export type InsightSourceType = 'conversation' | 'perspective' | 'doc' | 'slack' | 'external';
-export type InsightSourceStatus = 'pending' | 'synthesized' | 'archived';
-export type SynthesisRunStatus = 'draft' | 'approved' | 'applied' | 'rejected';
-
-export interface InsightSource {
-  id: number;
-  source_type: InsightSourceType;
-  source_ref: string | null;
-  content: string;
-  excerpt: string | null;
-  topic: string | null;
-  author_name: string | null;
-  author_context: string | null;
-  status: InsightSourceStatus;
-  synthesis_run_id: number | null;
-  resulting_rule_id: number | null;
-  tagged_by: string;
-  tagged_at: Date;
-  notes: string | null;
-}
-
-export interface InsightSourceInput {
-  source_type: InsightSourceType;
-  source_ref?: string;
-  content: string;
-  topic?: string;
-  author_name?: string;
-  author_context?: string;
-  tagged_by: string;
-  notes?: string;
-}
-
-export interface ProposedRule {
-  rule_type: RuleType;
-  name: string;
-  content: string;
-  source_ids: number[];
-  confidence: number;
-}
-
-export interface SynthesisPreviewPrediction {
-  interaction_id: string;
-  original_response: string;
-  predicted_change: string;
-  improvement_score: number; // -1 to 1
-  confidence: number;
-}
-
-export interface SynthesisPreviewSummary {
-  likely_improved: number;
-  likely_unchanged: number;
-  likely_worse: number;
-  avg_improvement: number;
-}
-
-export interface SynthesisPreviewResults {
-  predictions: SynthesisPreviewPrediction[];
-  summary: SynthesisPreviewSummary;
-}
-
-export interface SynthesisRun {
-  id: number;
-  topic: string | null;
-  source_ids: number[];
-  sources_count: number;
-  topics_included: string[];
-  proposed_rules: ProposedRule[];
-  preview_results: SynthesisPreviewResults | null;
-  preview_summary: string | null;
-  status: SynthesisRunStatus;
-  applied_rule_ids: number[] | null;
-  created_by: string | null;
-  created_at: Date;
-  reviewed_by: string | null;
-  reviewed_at: Date | null;
-  review_notes: string | null;
-  model_used: string | null;
-  tokens_used: number | null;
-  synthesis_duration_ms: number | null;
-}
-
-export interface SynthesisRunInput {
-  topic?: string;
-  source_ids: number[];
-  topics_included: string[];
-  proposed_rules: ProposedRule[];
-  created_by?: string;
-  model_used?: string;
-  tokens_used?: number;
-  synthesis_duration_ms?: number;
-}
-
-export interface InsightSourcesByTopic {
-  topic: string;
-  source_count: number;
-  source_ids: number[];
-  oldest_source: Date;
-  newest_source: Date;
-}
-
 /**
  * Database operations for Addie
  */
@@ -552,7 +430,7 @@ export class AddieDatabase {
     activeOnly?: boolean;
     limit?: number;
     offset?: number;
-  } = {}): Promise<AddieKnowledge[]> {
+  } = {}): Promise<{ rows: AddieKnowledge[]; total: number }> {
     const conditions: string[] = [];
     const params: unknown[] = [];
     let paramIndex = 1;
@@ -578,28 +456,35 @@ export class AddieDatabase {
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    let sql = `
-      SELECT * FROM addie_knowledge
+    const limit = options.limit ?? 100;
+    const offset = options.offset ?? 0;
+
+    params.push(limit);
+    const limitParam = `$${paramIndex++}`;
+    params.push(offset);
+    const offsetParam = `$${paramIndex++}`;
+
+    const sql = `
+      SELECT id, title, category, source_url, source_type, is_active,
+        LEFT(content, 250) as content,
+        fetch_url, fetch_status, last_fetched_at, summary, addie_notes,
+        relevance_tags, quality_score, discovery_source,
+        slack_channel_name, slack_username, slack_permalink,
+        created_by, created_at, updated_at,
+        COUNT(*) OVER()::int as total_count
+      FROM addie_knowledge
       ${whereClause}
       ORDER BY
         CASE WHEN source_type = 'curated' AND fetch_status = 'pending' THEN 0 ELSE 1 END,
         updated_at DESC,
         category,
         title
+      LIMIT ${limitParam} OFFSET ${offsetParam}
     `;
 
-    if (options.limit) {
-      sql += ` LIMIT $${paramIndex++}`;
-      params.push(options.limit);
-    }
-
-    if (options.offset) {
-      sql += ` OFFSET $${paramIndex++}`;
-      params.push(options.offset);
-    }
-
-    const result = await query<AddieKnowledge>(sql, params);
-    return result.rows;
+    const result = await query<AddieKnowledge & { total_count: number }>(sql, params);
+    const total = result.rows[0]?.total_count ?? 0;
+    return { rows: result.rows, total };
   }
 
   /**
@@ -1372,158 +1257,6 @@ export class AddieDatabase {
       unreviewed: parseInt(row.unreviewed, 10),
       by_event_type: byEventType,
       avg_latency_ms: parseFloat(row.avg_latency_ms),
-    };
-  }
-
-  // ============== Approval Queue ==============
-
-  /**
-   * Add an item to the approval queue
-   */
-  async queueForApproval(item: {
-    action_type: string;
-    target_channel_id?: string;
-    target_thread_ts?: string;
-    target_user_id?: string;
-    proposed_content: string;
-    trigger_type: string;
-    trigger_context?: Record<string, unknown>;
-    expires_at?: Date;
-  }): Promise<AddieApprovalQueueItem> {
-    const result = await query<AddieApprovalQueueItem>(
-      `INSERT INTO addie_approval_queue (
-        action_type, target_channel_id, target_thread_ts, target_user_id,
-        proposed_content, trigger_type, trigger_context, expires_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      RETURNING *`,
-      [
-        item.action_type,
-        item.target_channel_id || null,
-        item.target_thread_ts || null,
-        item.target_user_id || null,
-        item.proposed_content,
-        item.trigger_type,
-        item.trigger_context ? JSON.stringify(item.trigger_context) : null,
-        item.expires_at || null,
-      ]
-    );
-    return result.rows[0];
-  }
-
-  /**
-   * Get pending approval items
-   */
-  async getPendingApprovals(options: { limit?: number } = {}): Promise<AddieApprovalQueueItem[]> {
-    const limit = options.limit ?? 50;
-    const result = await query<AddieApprovalQueueItem>(
-      `SELECT * FROM addie_approval_queue
-       WHERE status = 'pending'
-         AND (expires_at IS NULL OR expires_at > NOW())
-       ORDER BY created_at ASC
-       LIMIT $1`,
-      [limit]
-    );
-    return result.rows;
-  }
-
-  /**
-   * Approve a queued item
-   */
-  async approveItem(
-    id: number,
-    reviewedBy: string,
-    options: { editNotes?: string; finalContent?: string } = {}
-  ): Promise<AddieApprovalQueueItem | null> {
-    const result = await query<AddieApprovalQueueItem>(
-      `UPDATE addie_approval_queue
-       SET status = 'approved',
-           reviewed_by = $1,
-           reviewed_at = NOW(),
-           edit_notes = $2,
-           final_content = $3
-       WHERE id = $4 AND status = 'pending'
-       RETURNING *`,
-      [reviewedBy, options.editNotes || null, options.finalContent || null, id]
-    );
-    return result.rows[0] || null;
-  }
-
-  /**
-   * Reject a queued item
-   */
-  async rejectItem(id: number, reviewedBy: string, reason?: string): Promise<AddieApprovalQueueItem | null> {
-    const result = await query<AddieApprovalQueueItem>(
-      `UPDATE addie_approval_queue
-       SET status = 'rejected',
-           reviewed_by = $1,
-           reviewed_at = NOW(),
-           edit_notes = $2
-       WHERE id = $3 AND status = 'pending'
-       RETURNING *`,
-      [reviewedBy, reason || null, id]
-    );
-    return result.rows[0] || null;
-  }
-
-  /**
-   * Mark a queued item as executed
-   */
-  async markExecuted(id: number, result: Record<string, unknown>): Promise<void> {
-    await query(
-      `UPDATE addie_approval_queue
-       SET executed_at = NOW(), execution_result = $1
-       WHERE id = $2`,
-      [JSON.stringify(result), id]
-    );
-  }
-
-  /**
-   * Expire old pending items
-   */
-  async expireOldItems(): Promise<number> {
-    const result = await query(
-      `UPDATE addie_approval_queue
-       SET status = 'expired'
-       WHERE status = 'pending'
-         AND expires_at IS NOT NULL
-         AND expires_at <= NOW()`
-    );
-    return result.rowCount ?? 0;
-  }
-
-  /**
-   * Get approval queue stats
-   */
-  async getApprovalStats(): Promise<{
-    pending: number;
-    approved_today: number;
-    rejected_today: number;
-    total_approved: number;
-    total_rejected: number;
-  }> {
-    const result = await query<{
-      pending: string;
-      approved_today: string;
-      rejected_today: string;
-      total_approved: string;
-      total_rejected: string;
-    }>(
-      `SELECT
-        COUNT(*) FILTER (WHERE status = 'pending')::text as pending,
-        COUNT(*) FILTER (WHERE status = 'approved' AND reviewed_at::date = CURRENT_DATE)::text as approved_today,
-        COUNT(*) FILTER (WHERE status = 'rejected' AND reviewed_at::date = CURRENT_DATE)::text as rejected_today,
-        COUNT(*) FILTER (WHERE status = 'approved')::text as total_approved,
-        COUNT(*) FILTER (WHERE status = 'rejected')::text as total_rejected
-       FROM addie_approval_queue`
-    );
-
-    const row = result.rows[0];
-    return {
-      pending: parseInt(row.pending, 10),
-      approved_today: parseInt(row.approved_today, 10),
-      rejected_today: parseInt(row.rejected_today, 10),
-      total_approved: parseInt(row.total_approved, 10),
-      total_rejected: parseInt(row.total_rejected, 10),
     };
   }
 
@@ -2853,335 +2586,6 @@ export class AddieDatabase {
       reviewedAt: row.reviewed_at,
       createdAt: row.created_at,
     };
-  }
-
-  // ============== Insight Synthesis ==============
-
-  /**
-   * Tag content as an insight source
-   */
-  async createInsightSource(input: InsightSourceInput): Promise<InsightSource> {
-    const result = await query<InsightSource>(
-      `INSERT INTO addie_insight_sources
-       (source_type, source_ref, content, topic, author_name, author_context, tagged_by, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING *`,
-      [
-        input.source_type,
-        input.source_ref || null,
-        input.content,
-        input.topic || null,
-        input.author_name || null,
-        input.author_context || null,
-        input.tagged_by,
-        input.notes || null,
-      ]
-    );
-    return result.rows[0];
-  }
-
-  /**
-   * Get insight source by ID
-   */
-  async getInsightSource(id: number): Promise<InsightSource | null> {
-    const result = await query<InsightSource>(
-      `SELECT * FROM addie_insight_sources WHERE id = $1`,
-      [id]
-    );
-    return result.rows[0] || null;
-  }
-
-  /**
-   * Get all pending insight sources, optionally filtered by topic
-   */
-  async getPendingInsightSources(topic?: string, limit?: number): Promise<InsightSource[]> {
-    const params: unknown[] = [];
-    let sql = `SELECT * FROM addie_insight_sources WHERE status = 'pending'`;
-
-    if (topic) {
-      params.push(topic);
-      sql += ` AND topic = $${params.length}`;
-    }
-
-    sql += ` ORDER BY tagged_at DESC`;
-
-    if (limit) {
-      params.push(limit);
-      sql += ` LIMIT $${params.length}`;
-    }
-
-    const result = await query<InsightSource>(sql, params);
-    return result.rows;
-  }
-
-  /**
-   * Get insight sources grouped by topic
-   */
-  async getInsightSourcesByTopic(): Promise<InsightSourcesByTopic[]> {
-    const result = await query<InsightSourcesByTopic>(
-      `SELECT * FROM addie_insight_sources_by_topic`
-    );
-    return result.rows;
-  }
-
-  /**
-   * Update insight source status
-   */
-  async updateInsightSourceStatus(
-    id: number,
-    status: InsightSourceStatus,
-    synthesisRunId?: number,
-    resultingRuleId?: number
-  ): Promise<InsightSource | null> {
-    const result = await query<InsightSource>(
-      `UPDATE addie_insight_sources
-       SET status = $2, synthesis_run_id = $3, resulting_rule_id = $4
-       WHERE id = $1
-       RETURNING *`,
-      [id, status, synthesisRunId || null, resultingRuleId || null]
-    );
-    return result.rows[0] || null;
-  }
-
-  /**
-   * Bulk update insight sources after synthesis
-   */
-  async markSourcesSynthesized(
-    sourceIds: number[],
-    synthesisRunId: number
-  ): Promise<number> {
-    const result = await query(
-      `UPDATE addie_insight_sources
-       SET status = 'synthesized', synthesis_run_id = $2
-       WHERE id = ANY($1)`,
-      [sourceIds, synthesisRunId]
-    );
-    return result.rowCount || 0;
-  }
-
-  /**
-   * Archive an insight source
-   */
-  async archiveInsightSource(id: number): Promise<InsightSource | null> {
-    const result = await query<InsightSource>(
-      `UPDATE addie_insight_sources SET status = 'archived' WHERE id = $1 RETURNING *`,
-      [id]
-    );
-    return result.rows[0] || null;
-  }
-
-  /**
-   * List all insight sources with optional filters
-   */
-  async listInsightSources(options?: {
-    status?: InsightSourceStatus;
-    topic?: string;
-    limit?: number;
-    offset?: number;
-  }): Promise<InsightSource[]> {
-    const params: unknown[] = [];
-    const conditions: string[] = [];
-
-    if (options?.status) {
-      params.push(options.status);
-      conditions.push(`status = $${params.length}`);
-    }
-
-    if (options?.topic) {
-      params.push(options.topic);
-      conditions.push(`topic = $${params.length}`);
-    }
-
-    let sql = `SELECT * FROM addie_insight_sources`;
-    if (conditions.length > 0) {
-      sql += ` WHERE ${conditions.join(' AND ')}`;
-    }
-    sql += ` ORDER BY tagged_at DESC`;
-
-    if (options?.limit) {
-      params.push(options.limit);
-      sql += ` LIMIT $${params.length}`;
-    }
-
-    if (options?.offset) {
-      params.push(options.offset);
-      sql += ` OFFSET $${params.length}`;
-    }
-
-    const result = await query<InsightSource>(sql, params);
-    return result.rows;
-  }
-
-  /**
-   * Create a synthesis run
-   */
-  async createSynthesisRun(input: SynthesisRunInput): Promise<SynthesisRun> {
-    const result = await query<SynthesisRun>(
-      `INSERT INTO addie_synthesis_runs
-       (topic, source_ids, sources_count, topics_included, proposed_rules, created_by, model_used, tokens_used, synthesis_duration_ms)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       RETURNING *`,
-      [
-        input.topic || null,
-        input.source_ids,
-        input.source_ids.length,
-        input.topics_included,
-        JSON.stringify(input.proposed_rules),
-        input.created_by || null,
-        input.model_used || null,
-        input.tokens_used || null,
-        input.synthesis_duration_ms || null,
-      ]
-    );
-    return result.rows[0];
-  }
-
-  /**
-   * Get synthesis run by ID
-   */
-  async getSynthesisRun(id: number): Promise<SynthesisRun | null> {
-    const result = await query<SynthesisRun>(
-      `SELECT * FROM addie_synthesis_runs WHERE id = $1`,
-      [id]
-    );
-    return result.rows[0] || null;
-  }
-
-  /**
-   * List synthesis runs
-   */
-  async listSynthesisRuns(options?: {
-    status?: SynthesisRunStatus;
-    limit?: number;
-  }): Promise<SynthesisRun[]> {
-    const params: unknown[] = [];
-    let sql = `SELECT * FROM addie_synthesis_runs`;
-
-    if (options?.status) {
-      params.push(options.status);
-      sql += ` WHERE status = $${params.length}`;
-    }
-
-    sql += ` ORDER BY created_at DESC`;
-
-    if (options?.limit) {
-      params.push(options.limit);
-      sql += ` LIMIT $${params.length}`;
-    }
-
-    const result = await query<SynthesisRun>(sql, params);
-    return result.rows;
-  }
-
-  /**
-   * Update synthesis run with preview results
-   */
-  async updateSynthesisPreview(
-    id: number,
-    previewResults: SynthesisPreviewResults,
-    previewSummary: string
-  ): Promise<SynthesisRun | null> {
-    const result = await query<SynthesisRun>(
-      `UPDATE addie_synthesis_runs
-       SET preview_results = $2, preview_summary = $3
-       WHERE id = $1
-       RETURNING *`,
-      [id, JSON.stringify(previewResults), previewSummary]
-    );
-    return result.rows[0] || null;
-  }
-
-  /**
-   * Review a synthesis run (approve or reject)
-   */
-  async reviewSynthesisRun(
-    id: number,
-    status: 'approved' | 'rejected',
-    reviewedBy: string,
-    reviewNotes?: string
-  ): Promise<SynthesisRun | null> {
-    const result = await query<SynthesisRun>(
-      `UPDATE addie_synthesis_runs
-       SET status = $2, reviewed_by = $3, reviewed_at = NOW(), review_notes = $4
-       WHERE id = $1
-       RETURNING *`,
-      [id, status, reviewedBy, reviewNotes || null]
-    );
-    return result.rows[0] || null;
-  }
-
-  /**
-   * Mark synthesis run as applied and record resulting rule IDs
-   */
-  async applySynthesisRun(
-    id: number,
-    appliedRuleIds: number[]
-  ): Promise<SynthesisRun | null> {
-    const result = await query<SynthesisRun>(
-      `UPDATE addie_synthesis_runs
-       SET status = 'applied', applied_rule_ids = $2
-       WHERE id = $1
-       RETURNING *`,
-      [id, appliedRuleIds]
-    );
-    return result.rows[0] || null;
-  }
-
-  /**
-   * Link synthesis run to resulting config version
-   */
-  async linkSynthesisToConfigVersion(
-    synthesisRunId: number,
-    configVersionId: number
-  ): Promise<void> {
-    // Update synthesis run with resulting config version
-    await query(
-      `UPDATE addie_synthesis_runs
-       SET resulting_config_version_id = $2
-       WHERE id = $1`,
-      [synthesisRunId, configVersionId]
-    );
-
-    // Update config version with source synthesis run
-    await query(
-      `UPDATE addie_config_versions
-       SET source_synthesis_run_ids = array_append(
-         COALESCE(source_synthesis_run_ids, ARRAY[]::INTEGER[]),
-         $2
-       )
-       WHERE version_id = $1
-       AND NOT ($2 = ANY(COALESCE(source_synthesis_run_ids, ARRAY[]::INTEGER[])))`,
-      [configVersionId, synthesisRunId]
-    );
-  }
-
-  /**
-   * Get distinct topics from pending insight sources
-   */
-  async getInsightTopics(): Promise<string[]> {
-    const result = await query<{ topic: string }>(
-      `SELECT DISTINCT COALESCE(topic, 'uncategorized') AS topic
-       FROM addie_insight_sources
-       WHERE status = 'pending'
-       ORDER BY topic`
-    );
-    return result.rows.map(r => r.topic);
-  }
-
-  /**
-   * Count pending insight sources
-   */
-  async countPendingInsights(topic?: string): Promise<number> {
-    const params: unknown[] = [];
-    let sql = `SELECT COUNT(*) FROM addie_insight_sources WHERE status = 'pending'`;
-
-    if (topic) {
-      params.push(topic);
-      sql += ` AND topic = $${params.length}`;
-    }
-
-    const result = await query<{ count: string }>(sql, params);
-    return parseInt(result.rows[0].count, 10);
   }
 
   /**

@@ -16,7 +16,7 @@ import {
 } from "../middleware/auth.js";
 import { query, getPool } from "../db/client.js";
 import { MemberDatabase } from "../db/member-db.js";
-import { BrandDatabase } from "../db/brand-db.js";
+import { BrandDatabase, resolveBrandFromJson } from "../db/brand-db.js";
 import { BrandManager } from "../brand-manager.js";
 import { OrganizationDatabase } from "../db/organization-db.js";
 import { OrgKnowledgeDatabase } from "../db/org-knowledge-db.js";
@@ -54,36 +54,12 @@ export interface MemberProfileRoutesConfig {
 async function resolveBrand(brandDb: BrandDatabase, domain: string): Promise<MemberBrandInfo | undefined> {
   const hosted = await brandDb.getHostedBrandByDomain(domain);
   if (hosted) {
-    const bj = hosted.brand_json as Record<string, unknown>;
-    // house_portfolio: read from brands[0]; fall back to top-level logos for simple brand.json
-    const brands = bj.brands as Array<Record<string, unknown>> | undefined;
-    const primaryBrand = brands?.[0];
-    const logos = (primaryBrand?.logos ?? bj.logos) as Array<Record<string, unknown>> | undefined;
-    const colors = (primaryBrand?.colors ?? bj.colors) as Record<string, unknown> | undefined;
-    return {
-      domain,
-      logo_url: logos?.[0]?.url as string | undefined,
-      brand_color: colors?.primary as string | undefined,
-      verified: hosted.domain_verified,
-    };
+    return resolveBrandFromJson(domain, hosted.brand_json as Record<string, unknown>, hosted.domain_verified);
   }
-
   const discovered = await brandDb.getDiscoveredBrandByDomain(domain);
-  if (discovered) {
-    const manifest = discovered.brand_manifest as Record<string, unknown> | undefined;
-    // house_portfolio: logos are in brands[0].logos; fall back to top-level logos for other structures
-    const brands = manifest?.brands as Array<Record<string, unknown>> | undefined;
-    const primaryBrand = brands?.[0];
-    const logos = (primaryBrand?.logos ?? manifest?.logos) as Array<Record<string, unknown>> | undefined;
-    const colors = (primaryBrand?.colors ?? manifest?.colors) as Record<string, unknown> | undefined;
-    return {
-      domain,
-      logo_url: logos?.[0]?.url as string | undefined,
-      brand_color: colors?.primary as string | undefined,
-      verified: true, // discovered brands have live brand.json
-    };
+  if (discovered?.brand_manifest) {
+    return resolveBrandFromJson(domain, discovered.brand_manifest as Record<string, unknown>, true);
   }
-
   return undefined;
 }
 
@@ -174,7 +150,6 @@ export function createMemberProfileRouter(config: MemberProfileRoutesConfig): Ro
       logger.error({ err: error, durationMs: Date.now() - startTime }, 'GET /api/me/member-profile error');
       res.status(500).json({
         error: 'Failed to get member profile',
-        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });
@@ -211,6 +186,14 @@ export function createMemberProfileRouter(config: MemberProfileRoutesConfig): Ro
         return res.status(400).json({
           error: 'Missing required fields',
           message: 'display_name and slug are required',
+        });
+      }
+
+      // Validate tagline length
+      if (tagline && typeof tagline === 'string' && tagline.length > 200) {
+        return res.status(400).json({
+          error: 'Invalid tagline',
+          message: 'Tagline must be 200 characters or fewer',
         });
       }
 
@@ -378,7 +361,6 @@ export function createMemberProfileRouter(config: MemberProfileRoutesConfig): Ro
       logger.error({ err: error, durationMs: Date.now() - startTime }, 'POST /api/me/member-profile error');
       res.status(500).json({
         error: 'Failed to create member profile',
-        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });
@@ -441,6 +423,14 @@ export function createMemberProfileRouter(config: MemberProfileRoutesConfig): Ro
         return res.status(404).json({
           error: 'Profile not found',
           message: 'No member profile exists for your organization. Use POST to create one.',
+        });
+      }
+
+      // Validate tagline length
+      if (updates.tagline && typeof updates.tagline === 'string' && updates.tagline.length > 200) {
+        return res.status(400).json({
+          error: 'Invalid tagline',
+          message: 'Tagline must be 200 characters or fewer',
         });
       }
 
@@ -523,7 +513,6 @@ export function createMemberProfileRouter(config: MemberProfileRoutesConfig): Ro
       logger.error({ err: error, durationMs: duration }, 'Update member profile error');
       res.status(500).json({
         error: 'Failed to update member profile',
-        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });
@@ -750,7 +739,7 @@ export function createMemberProfileRouter(config: MemberProfileRoutesConfig): Ro
       const duration = Date.now() - startTime;
       const statusCode = error?.statusCode || 500;
       logger.error({ err: error, durationMs: duration }, 'Update brand identity error');
-      res.status(statusCode).json({ error: 'Failed to update brand identity', message: error instanceof Error ? error.message : 'Unknown error' });
+      res.status(statusCode).json({ error: 'Failed to update brand identity' });
     }
   });
 
@@ -846,7 +835,6 @@ export function createMemberProfileRouter(config: MemberProfileRoutesConfig): Ro
       logger.error({ err: error, durationMs: duration }, 'Update member profile visibility error');
       res.status(500).json({
         error: 'Failed to update profile visibility',
-        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });
@@ -931,7 +919,6 @@ export function createMemberProfileRouter(config: MemberProfileRoutesConfig): Ro
       logger.error({ err: error, durationMs: Date.now() - startTime }, 'DELETE /api/me/member-profile error');
       res.status(500).json({
         error: 'Failed to delete member profile',
-        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });
@@ -964,7 +951,6 @@ export function createAdminMemberProfileRouter(config: MemberProfileRoutesConfig
       logger.error({ err: error }, 'Admin list member profiles error');
       res.status(500).json({
         error: 'Failed to list member profiles',
-        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });
@@ -1011,7 +997,6 @@ export function createAdminMemberProfileRouter(config: MemberProfileRoutesConfig
       logger.error({ err: error }, 'Admin update member profile error');
       res.status(500).json({
         error: 'Failed to update member profile',
-        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });
@@ -1040,7 +1025,6 @@ export function createAdminMemberProfileRouter(config: MemberProfileRoutesConfig
       logger.error({ err: error }, 'Admin delete member profile error');
       res.status(500).json({
         error: 'Failed to delete member profile',
-        message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });

@@ -1,5 +1,7 @@
 ---
 title: Implementing SI Hosts
+description: "Integrate AdCP Sponsored Intelligence into your AI platform. Discover brand agents, render standard UI components, manage session lifecycle, handle consent flows, and hand off to ACP for commerce."
+"og:title": "AdCP — Implementing SI Hosts"
 ---
 
 This guide helps AI platforms implement Sponsored Intelligence host capabilities. Once implemented, your AI assistant can invoke brand agents for rich conversational commerce experiences.
@@ -101,7 +103,8 @@ When a session returns `session_status: "pending_handoff"`:
 
 - Implement session timeouts (recommended: 5 minutes of inactivity)
 - Track session state locally and clean up on termination
-- Handle error codes: `session_not_found`, `offering_unavailable`, `rate_limited`
+- Handle standard error codes: `SESSION_NOT_FOUND`, `SESSION_TERMINATED`, `RATE_LIMITED`
+- Handle SI-specific error codes: `offer_unavailable`, `capability_unsupported`
 
 ## Testing Your Implementation
 

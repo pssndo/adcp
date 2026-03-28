@@ -1,8 +1,10 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { buildFormats } from '../../src/shared/formats.js';
-import { handleListCreativeFormats, handlePreviewCreative, buildReferenceFormats } from '../../src/creative-agent/task-handlers.js';
+import { handleListCreativeFormats, handlePreviewCreative, buildReferenceFormats, createCreativeAgentServer } from '../../src/creative-agent/task-handlers.js';
 import { renderPreview } from '../../src/creative-agent/preview-renderer.js';
 import { storePreview, getPreview, cleanExpiredPreviews } from '../../src/creative-agent/preview-store.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 
 const TEST_BASE_URL = 'http://localhost:3000';
 const TEST_AGENT_URL = `${TEST_BASE_URL}/api/creative-agent`;
@@ -44,7 +46,7 @@ describe('training agent formats', () => {
 describe('reference formats', () => {
   it('loads reference formats and rewrites agent_url', () => {
     const formats = buildReferenceFormats(TEST_AGENT_URL);
-    expect(formats.length).toBe(49);
+    expect(formats.length).toBe(52);
     for (const f of formats) {
       const fid = f.format_id as { agent_url: string; id: string };
       expect(fid.agent_url).toBe(TEST_AGENT_URL);
@@ -105,49 +107,13 @@ describe('handleListCreativeFormats', () => {
   it('returns all formats when no filters provided', () => {
     const result = handleListCreativeFormats({}, formats);
     const returned = result.formats as unknown[];
-    expect(returned.length).toBe(49);
+    expect(returned.length).toBe(52);
   });
 
   it('response structure matches schema: { formats: [...] }', () => {
     const result = handleListCreativeFormats({}, formats);
     expect(result).toHaveProperty('formats');
     expect(Array.isArray(result.formats)).toBe(true);
-  });
-
-  it('filters by type: display', () => {
-    const result = handleListCreativeFormats({ type: 'display' }, formats);
-    const returned = result.formats as Array<{ format_id: { id: string } }>;
-    expect(returned.length).toBeGreaterThan(0);
-    expect(returned.length).toBeLessThan(49);
-  });
-
-  it('filters by type: video', () => {
-    const result = handleListCreativeFormats({ type: 'video' }, formats);
-    const returned = result.formats as Array<{ format_id: { id: string } }>;
-    expect(returned.length).toBeGreaterThan(0);
-    for (const f of returned) {
-      expect(f.format_id.id).toMatch(/video|ctv/);
-    }
-  });
-
-  it('filters by type: audio', () => {
-    const result = handleListCreativeFormats({ type: 'audio' }, formats);
-    const returned = result.formats as Array<{ format_id: { id: string } }>;
-    expect(returned.length).toBe(3);
-    for (const f of returned) {
-      expect(f.format_id.id).toMatch(/^audio_/);
-    }
-  });
-
-  it('filters by type: dooh', () => {
-    const result = handleListCreativeFormats({ type: 'dooh' }, formats);
-    const returned = result.formats as Array<{ format_id: { id: string } }>;
-    expect(returned.length).toBe(4);
-  });
-
-  it('returns empty array for unknown type', () => {
-    const result = handleListCreativeFormats({ type: 'hologram' }, formats);
-    expect((result.formats as unknown[]).length).toBe(0);
   });
 
   it('filters by name_search (case-insensitive)', () => {
@@ -247,7 +213,7 @@ describe('handlePreviewCreative', () => {
     expect(renders).toHaveLength(1);
     expect(renders[0].role).toBe('primary');
     expect(renders[0].preview_url).toBeTruthy();
-    expect((renders[0].preview_url as string)).toContain('/api/creative-agent/preview/');
+    expect((renders[0].preview_url as string)).toContain('/preview/');
   });
 
   it('returns html output when requested', () => {
@@ -279,7 +245,7 @@ describe('handlePreviewCreative', () => {
     const renders = ((result.previews as any[])[0].renders as any[]);
     expect(renders[0].output_format).toBe('both');
     expect(renders[0].preview_html).toContain('<!DOCTYPE html>');
-    expect(renders[0].preview_url).toContain('/api/creative-agent/preview/');
+    expect(renders[0].preview_url).toContain('/preview/');
   });
 
   it('generates multiple previews from inputs array', () => {
@@ -520,5 +486,113 @@ describe('preview store', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ── MCP tool responses: structuredContent (regression #1519) ────────
+
+describe('MCP tool responses include structuredContent', () => {
+  let client: Client;
+  let server: ReturnType<typeof createCreativeAgentServer>;
+
+  beforeEach(async () => {
+    server = createCreativeAgentServer(TEST_AGENT_URL);
+    client = new Client({ name: 'test-client', version: '1.0.0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  });
+
+  afterEach(async () => {
+    await client.close();
+    await server.close();
+  });
+
+  it('list_creative_formats returns structuredContent with formats array', async () => {
+    const result = await client.callTool({
+      name: 'list_creative_formats',
+      arguments: { asset_types: ['audio'] },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toBeDefined();
+    const structured = result.structuredContent as { formats: unknown[] };
+    expect(structured.formats).toBeDefined();
+    expect(Array.isArray(structured.formats)).toBe(true);
+    expect(structured.formats.length).toBe(3);
+  });
+
+  it('list_creative_formats structuredContent matches content text', async () => {
+    const result = await client.callTool({
+      name: 'list_creative_formats',
+      arguments: {},
+    });
+
+    const structured = result.structuredContent as Record<string, unknown>;
+    const content = result.content as Array<{ type: string; text: string }>;
+    expect(content).toHaveLength(1);
+    expect(JSON.parse(content[0].text)).toEqual(structured);
+  });
+
+  it('preview_creative returns structuredContent with previews', async () => {
+    const result = await client.callTool({
+      name: 'preview_creative',
+      arguments: {
+        request_type: 'single',
+        creative_manifest: {
+          format_id: { agent_url: TEST_AGENT_URL, id: 'display_300x250_image' },
+          assets: {
+            banner_image: { url: 'https://example.com/ad.jpg' },
+            click_url: { url: 'https://example.com' },
+          },
+        },
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toBeDefined();
+    const structured = result.structuredContent as { response_type: string; previews: unknown[] };
+    expect(structured.response_type).toBe('single');
+    expect(structured.previews).toBeDefined();
+    expect(structured.previews.length).toBe(1);
+  });
+
+  it('preview_creative structuredContent matches content text', async () => {
+    const result = await client.callTool({
+      name: 'preview_creative',
+      arguments: {
+        creative_manifest: {
+          format_id: { agent_url: TEST_AGENT_URL, id: 'display_300x250_image' },
+          assets: {},
+        },
+      },
+    });
+
+    const structured = result.structuredContent as Record<string, unknown>;
+    const content = result.content as Array<{ type: string; text: string }>;
+    expect(JSON.parse(content[0].text)).toEqual(structured);
+  });
+
+  it('preview_creative batch mode returns structuredContent', async () => {
+    const result = await client.callTool({
+      name: 'preview_creative',
+      arguments: {
+        request_type: 'batch',
+        requests: [
+          {
+            creative_manifest: {
+              creative_id: 'cr_1',
+              format_id: { agent_url: TEST_AGENT_URL, id: 'display_300x250_image' },
+              assets: {},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toBeDefined();
+    const structured = result.structuredContent as { response_type: string; results: unknown[] };
+    expect(structured.response_type).toBe('batch');
+    expect(structured.results).toHaveLength(1);
   });
 });

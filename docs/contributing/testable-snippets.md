@@ -1,3 +1,9 @@
+---
+title: Testable snippets
+description: "How to write testable AdCP documentation: frontmatter flags, JSON schema validation, executable code blocks, and CI checks for keeping examples accurate."
+"og:title": "AdCP — Testable snippets"
+---
+
 # Writing Testable Documentation Snippets
 
 This guide explains how to write code examples in AdCP documentation that are automatically tested for correctness.
@@ -93,7 +99,7 @@ asyncio.run(example())
 Always use the public test agent for examples:
 
 - **Test Agent URL**: `https://test-agent.adcontextprotocol.org`
-- **MCP Token**: `1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ`
+- **MCP Token**: Your AAO API key (set as `$ADCP_AUTH_TOKEN`)
 - **A2A Token**: `L4UCklW_V_40eTdWuQYF6HD5GWeKkgV8U6xxK-jwNO8`
 
 ### 2. Make Examples Self-Contained
@@ -112,7 +118,7 @@ import { AdcpClient } from '@adcp/client';
 const client = new AdcpClient({
   agentUrl: 'https://test-agent.adcontextprotocol.org/mcp',
   protocol: 'mcp',
-  bearerToken: '1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ'
+  bearerToken: 'sk_your_api_key_here'
 });
 
 const products = await client.getProducts({
@@ -172,7 +178,7 @@ import { AdcpClient } from '@adcp/client';
 const client = new AdcpClient({
   agentUrl: 'https://test-agent.adcontextprotocol.org/mcp',
   protocol: 'mcp',
-  bearerToken: '1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ'
+  bearerToken: 'sk_your_api_key_here'
 });
 
 console.log('Authenticated:', client.isAuthenticated);

@@ -300,8 +300,7 @@ export function setupDomainRoutes(
 
         if (error instanceof Error && error.message.includes("domain")) {
           return res.status(400).json({
-            error: "Domain error",
-            message: error.message,
+            error: "Invalid domain",
           });
         }
 
@@ -757,8 +756,7 @@ export function setupDomainRoutes(
 
         if (error instanceof Error && error.message.includes("domain")) {
           return res.status(400).json({
-            error: "Domain error",
-            message: error.message,
+            error: "Invalid domain",
           });
         }
 
@@ -1197,32 +1195,68 @@ export function setupDomainRoutes(
 
         // Check if domain is already claimed by another org locally
         const existingResult = await pool.query(
-          `SELECT od.workos_organization_id, od.verified, o.name as org_name
+          `SELECT od.workos_organization_id, od.verified, o.name as org_name, o.is_personal
            FROM organization_domains od
            JOIN organizations o ON o.workos_organization_id = od.workos_organization_id
            WHERE od.domain = $1`,
           [normalizedDomain]
         );
 
+        let reassigningFromPersonalOrgId: string | null = null;
+
         if (existingResult.rows.length > 0) {
           const existingOrg = existingResult.rows[0];
           if (existingOrg.workos_organization_id !== orgId) {
-            return res.status(409).json({
-              error: "Domain already claimed",
-              message: `Domain ${normalizedDomain} is already associated with ${existingOrg.org_name}`,
-              existing_organization_id: existingOrg.workos_organization_id,
-            });
+            // Allow admins to reassign domains from personal orgs to corporate orgs
+            if (existingOrg.is_personal) {
+              logger.info(
+                { orgId, domain: normalizedDomain, fromOrg: existingOrg.workos_organization_id, fromOrgName: existingOrg.org_name },
+                "Reassigning domain from personal org to corporate org"
+              );
+              // Remove domain from the personal org in WorkOS first
+              try {
+                const personalWorkosOrg = await workos.organizations.getOrganization(existingOrg.workos_organization_id);
+                const remainingDomains = personalWorkosOrg.domains
+                  .filter(d => d.domain.toLowerCase() !== normalizedDomain)
+                  .map(d => ({
+                    domain: d.domain,
+                    state: d.state === 'verified' ? DomainDataState.Verified : DomainDataState.Pending,
+                  }));
+                await workos.organizations.updateOrganization({
+                  organization: existingOrg.workos_organization_id,
+                  domainData: remainingDomains,
+                });
+              } catch (workosErr) {
+                logger.error({ err: workosErr, domain: normalizedDomain, personalOrgId: existingOrg.workos_organization_id }, "Failed to remove domain from personal org in WorkOS");
+                return res.status(502).json({
+                  error: "Failed to remove domain from personal workspace in WorkOS",
+                  message: "The domain could not be removed from the personal workspace. Please retry or remove it manually first.",
+                });
+              }
+              // Local DB cleanup is deferred until after WorkOS add succeeds (below)
+              // to avoid orphaning the domain if the WorkOS add fails
+              reassigningFromPersonalOrgId = existingOrg.workos_organization_id;
+            } else {
+              return res.status(409).json({
+                error: "Domain already claimed",
+                message: `Domain ${normalizedDomain} is already associated with ${existingOrg.org_name}`,
+                existing_organization_id: existingOrg.workos_organization_id,
+              });
+            }
           }
           // Domain already belongs to this org - but need to verify it if not already
-          if (existingOrg.verified) {
-            return res.json({
-              success: true,
-              message: "Domain already associated with this organization",
-              domain: normalizedDomain,
-            });
+          // Skip this check if we just reassigned from a personal org (domain was deleted)
+          if (!reassigningFromPersonalOrgId) {
+            if (existingOrg.verified) {
+              return res.json({
+                success: true,
+                message: "Domain already associated with this organization",
+                domain: normalizedDomain,
+              });
+            }
+            // Domain exists but not verified - continue to verify it
+            logger.info({ orgId, domain: normalizedDomain }, "Domain exists but not verified, proceeding to verify");
           }
-          // Domain exists but not verified - continue to verify it
-          logger.info({ orgId, domain: normalizedDomain }, "Domain exists but not verified, proceeding to verify");
         }
 
         // Add to WorkOS first - this is the source of truth
@@ -1260,9 +1294,22 @@ export function setupDomainRoutes(
         } catch (workosErr) {
           logger.error({ err: workosErr, domain: normalizedDomain, orgId }, "Failed to add domain to WorkOS");
           return res.status(500).json({
-            error: "WorkOS error",
-            message: `Failed to add domain to WorkOS: ${workosErr instanceof Error ? workosErr.message : 'Unknown error'}`,
+            error: "Failed to add domain to WorkOS",
           });
+        }
+
+        // If reassigning from a personal org, clean up the old org's local DB state
+        // This runs after WorkOS add succeeds, so we don't orphan the domain on failure
+        if (reassigningFromPersonalOrgId) {
+          await pool.query(
+            `DELETE FROM organization_domains WHERE domain = $1 AND workos_organization_id = $2`,
+            [normalizedDomain, reassigningFromPersonalOrgId]
+          );
+          await pool.query(
+            `UPDATE organizations SET email_domain = NULL, updated_at = NOW()
+             WHERE workos_organization_id = $1 AND email_domain = $2`,
+            [reassigningFromPersonalOrgId, normalizedDomain]
+          );
         }
 
         // If setting as primary, clear existing primary first
@@ -1375,8 +1422,7 @@ export function setupDomainRoutes(
         } catch (workosErr) {
           logger.error({ err: workosErr, domain: normalizedDomain, orgId }, "Failed to remove domain from WorkOS");
           return res.status(500).json({
-            error: "WorkOS error",
-            message: `Failed to remove domain from WorkOS: ${workosErr instanceof Error ? workosErr.message : 'Unknown error'}`,
+            error: "Failed to remove domain from WorkOS",
           });
         }
 
@@ -1628,7 +1674,7 @@ export function setupDomainRoutes(
         // Also identify which user domains are already claimed by other orgs
         const unverifiedResult = await pool.query(`
           WITH claimed_domains AS (
-            SELECT LOWER(od.domain) as domain, od.workos_organization_id, org.name as claiming_org_name
+            SELECT LOWER(od.domain) as domain, od.workos_organization_id, org.name as claiming_org_name, org.is_personal as claiming_org_is_personal
             FROM organization_domains od
             JOIN organizations org ON org.workos_organization_id = od.workos_organization_id
           )
@@ -1643,7 +1689,8 @@ export function setupDomainRoutes(
             json_agg(DISTINCT jsonb_build_object(
               'domain', cd.domain,
               'org_id', cd.workos_organization_id,
-              'org_name', cd.claiming_org_name
+              'org_name', cd.claiming_org_name,
+              'is_personal', cd.claiming_org_is_personal
             )) FILTER (
               WHERE cd.domain IS NOT NULL
               AND cd.workos_organization_id != o.workos_organization_id
@@ -2253,6 +2300,7 @@ export function setupDomainRoutes(
             do {
               const memberships = await config.workos!.userManagement.listOrganizationMemberships({
                 organizationId: orgId,
+                statuses: ['active', 'inactive', 'pending'],
                 limit: 100,
                 after,
               });
@@ -2404,6 +2452,7 @@ export function setupDomainRoutes(
             do {
               const memberships = await config.workos!.userManagement.listOrganizationMemberships({
                 organizationId: orgId,
+                statuses: ['active', 'inactive', 'pending'],
                 limit: 100,
                 after,
               });
@@ -2416,13 +2465,11 @@ export function setupDomainRoutes(
               after = memberships.listMetadata?.after ?? undefined;
             } while (after);
           } catch (err: any) {
-            const rawMessage = err?.message || err?.code || 'Unknown error';
-            const errorMessage = rawMessage.length > 200 ? rawMessage.slice(0, 200) + '...' : rawMessage;
             logger.warn({ err, orgId }, 'Failed to get memberships for org, skipping');
             const userCount = (row.users as Array<unknown>).length;
             orgErrors += userCount;
             for (const user of row.users as Array<{ email: string }>) {
-              orgErrorDetails.push({ email: user.email, message: `Could not list org memberships: ${errorMessage}` });
+              orgErrorDetails.push({ email: user.email, message: 'Could not list org memberships' });
             }
             details.push({
               org_id: orgId,
@@ -2470,11 +2517,9 @@ export function setupDomainRoutes(
                 // User is already a member or has a pending invitation
                 orgSkipped++;
               } else {
-                const rawMessage = err?.message || err?.code || 'Unknown error';
-                const errorMessage = rawMessage.length > 200 ? rawMessage.slice(0, 200) + '...' : rawMessage;
                 logger.warn({ err, orgId, email: user.email }, 'Failed to add domain user');
                 orgErrors++;
-                orgErrorDetails.push({ email: user.email, message: errorMessage });
+                orgErrorDetails.push({ email: user.email, message: 'Failed to add domain user' });
               }
             }
           }

@@ -1,4 +1,7 @@
 ---
+title: Testable examples demo
+description: "AdCP testable documentation demo: validated JSON schemas and executable JavaScript code blocks that run against a live test agent."
+"og:title": "AdCP — Testable examples demo"
 testable: true
 ---
 
@@ -42,7 +45,7 @@ uvx adcp \
   https://test-agent.adcontextprotocol.org/mcp \
   list_creative_formats \
   '{}' \
-  --auth 1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ
+  --auth $ADCP_AUTH_TOKEN
 ```
 
 ## How Testable Documentation Works

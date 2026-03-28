@@ -13,14 +13,6 @@
       },
       "minItems": 1
     },
-    "format_types": {
-      "type": "array",
-      "description": "Filter by high-level format types (e.g., 'video', 'audio', 'display'). For specific format matching, use format_ids instead.",
-      "items": {
-        "type": "string"
-      },
-      "minItems": 1
-    },
     "statuses": {
       "type": "array",
       "description": "Filter by creative approval statuses",
@@ -89,14 +81,6 @@
     "media_buy_ids": {
       "type": "array",
       "description": "Filter creatives assigned to any of these media buys. Sales-agent-specific — standalone creative agents SHOULD ignore this filter.",
-      "items": {
-        "type": "string"
-      },
-      "minItems": 1
-    },
-    "buyer_refs": {
-      "type": "array",
-      "description": "Filter creatives assigned to media buys with any of these buyer references. Sales-agent-specific — standalone creative agents SHOULD ignore this filter.",
       "items": {
         "type": "string"
       },

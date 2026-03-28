@@ -1,7 +1,7 @@
 ---
 title: Schemas and SDKs
-description: Access AdCP schemas and client libraries for JavaScript, Python, and AI coding agents
-keywords: [schemas, SDK, client library, JavaScript, Python, TypeScript, MCP]
+description: "AdCP JSON schemas and SDKs for JavaScript and Python. Download schemas from GitHub or fetch at runtime. Includes setup for AI coding agents using Cursor, Windsurf, and Claude."
+"og:title": "AdCP — Schemas and SDKs"
 ---
 
 Get started integrating with AdCP using our schemas and official SDKs.
@@ -12,7 +12,7 @@ AdCP schemas are available from two sources:
 
 | Source | URL | Best For |
 |--------|-----|----------|
-| Website | `https://adcontextprotocol.org/schemas/v2/` | Runtime fetching, version aliases |
+| Website | `https://adcontextprotocol.org/schemas/v3/` | Runtime fetching, version aliases |
 | GitHub | `https://github.com/adcontextprotocol/adcp/tree/main/dist/schemas` | Offline access, CI/CD pipelines |
 
 Both sources contain identical schemas. The GitHub repository includes all released versions with bundled schemas committed directly to the codebase.
@@ -21,10 +21,10 @@ Both sources contain identical schemas. The GitHub repository includes all relea
 
 | Schema | URL |
 |--------|-----|
-| Product | `https://adcontextprotocol.org/schemas/v2/core/product.json` |
-| Media Buy | `https://adcontextprotocol.org/schemas/v2/core/media-buy.json` |
+| Product | `https://adcontextprotocol.org/schemas/v3/core/product.json` |
+| Media Buy | `https://adcontextprotocol.org/schemas/v3/core/media-buy.json` |
 | Creative Format | `https://adcontextprotocol.org/schemas/v3/core/format.json` |
-| Schema Registry | `https://adcontextprotocol.org/schemas/v2/index.json` |
+| Schema Registry | `https://adcontextprotocol.org/schemas/v3/index.json` |
 
 ### For AI Coding Agents
 
@@ -59,7 +59,6 @@ const products = await client.getProducts({
 **Resources:**
 - [NPM Package](https://www.npmjs.com/package/@adcp/client)
 - [GitHub Repository](https://github.com/adcontextprotocol/adcp-client)
-- [Quickstart Guide](/docs/quickstart)
 
 **Package exports:**
 - `@adcp/client` — Main API
@@ -88,7 +87,6 @@ products = client.get_products(
 **Resources:**
 - [PyPI Package](https://pypi.org/project/adcp/)
 - [GitHub Repository](https://github.com/adcontextprotocol/adcp-python)
-- [Quickstart Guide](/docs/quickstart)
 
 ## CLI Tools
 
@@ -114,8 +112,8 @@ AdCP uses semantic versioning. Choose the right path for your use case:
 
 | Path | Example | Best For |
 |------|---------|----------|
-| Exact version | `/schemas/2.6.0/` | Production, SDK generation |
-| Major version | `/schemas/v2/` | Development, documentation |
+| Exact version | `/schemas/2.5.3/` | Production, SDK generation |
+| Major version | `/schemas/v3/` | Development, documentation |
 | Minor version | `/schemas/v2.5/` | Stable development (patch updates only) |
 
 ### Production (Recommended)
@@ -123,7 +121,7 @@ AdCP uses semantic versioning. Choose the right path for your use case:
 Pin to an exact version for stability:
 
 ```javascript
-const SCHEMA_VERSION = '2.6.0';
+const SCHEMA_VERSION = '2.5.3';
 const schema = await fetch(
   `https://adcontextprotocol.org/schemas/${SCHEMA_VERSION}/core/product.json`
 );
@@ -135,7 +133,7 @@ Use the major version alias to stay current with backward-compatible updates:
 
 ```javascript
 const schema = await fetch(
-  'https://adcontextprotocol.org/schemas/v2/core/product.json'
+  'https://adcontextprotocol.org/schemas/v3/core/product.json'
 );
 ```
 
@@ -144,12 +142,12 @@ const schema = await fetch(
 ```bash
 # TypeScript
 npx json-schema-to-typescript \
-  https://adcontextprotocol.org/schemas/2.6.0/core/product.json \
+  https://adcontextprotocol.org/schemas/2.5.3/core/product.json \
   --output types/product.d.ts
 
 # Python
 datamodel-codegen \
-  --url https://adcontextprotocol.org/schemas/2.6.0/core/product.json \
+  --url https://adcontextprotocol.org/schemas/2.5.3/core/product.json \
   --output models/product.py
 ```
 
@@ -160,7 +158,7 @@ For tools that don't support `$ref` resolution, use bundled schemas with all ref
 ### Website Access
 
 ```
-https://adcontextprotocol.org/schemas/2.6.0/bundled/media-buy/create-media-buy-request.json
+https://adcontextprotocol.org/schemas/2.5.3/bundled/media-buy/create-media-buy-request.json
 ```
 
 ### GitHub Access
@@ -203,19 +201,19 @@ All request/response task schemas are bundled:
 | `bundled/media-buy/` | get-products, create-media-buy, update-media-buy, list-creative-formats, sync-creatives, build-creative, list-creatives, get-media-buy-delivery, list-authorized-properties, provide-performance-feedback |
 | `bundled/creative/` | list-creative-formats, preview-creative |
 | `bundled/signals/` | get-signals, activate-signal |
-| `bundled/property/` | create-property-list, get-property-list, list-property-lists, update-property-list, delete-property-list, get-property-features, validate-property-delivery |
+| `bundled/property/` | create-property-list, get-property-list, list-property-lists, update-property-list, delete-property-list, validate-property-delivery |
 | `bundled/content-standards/` | create-content-standards, get-content-standards, list-content-standards, update-content-standards, calibrate-content, validate-content-delivery, get-media-buy-artifacts |
 | `bundled/sponsored-intelligence/` | si-get-offering, si-initiate-session, si-send-message, si-terminate-session |
 | `bundled/protocol/` | get-adcp-capabilities |
 | `bundled/core/` | tasks-get, tasks-list |
 
-See the [schema registry](https://adcontextprotocol.org/schemas/v2/index.json) for all available schemas.
+See the [schema registry](https://adcontextprotocol.org/schemas/v3/index.json) for all available schemas.
 
 ## Version Discovery
 
 ```bash
 # Get current version
-curl https://adcontextprotocol.org/schemas/v2/index.json | jq '.adcp_version'
+curl https://adcontextprotocol.org/schemas/v3/index.json | jq '.adcp_version'
 ```
 
 Check [Release Notes](/docs/reference/release-notes) for version history and migration guides.

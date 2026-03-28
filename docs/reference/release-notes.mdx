@@ -1,11 +1,69 @@
 ---
 title: Release Notes
-description: Major release highlights and migration guides for AdCP
-keywords: [releases, what's new, migration guide, breaking changes]
+description: "AdCP release notes with version highlights and migration guides. Covers breaking changes, new tasks, and schema updates for each major release."
+"og:title": "AdCP — Release Notes"
 ---
 
 
 High-level summaries of major AdCP releases with migration guidance. For detailed technical changelogs, see [CHANGELOG.md](https://github.com/adcontextprotocol/adcp/blob/main/CHANGELOG.md).
+
+---
+
+## Version 3.0.0-rc.2
+
+**Status:** Release Candidate | [AdCP 3.0 overview](/docs/reference/whats-new-in-v3)
+
+### What's New
+
+1. **Brand Protocol Rights Lifecycle** — `get_rights`, `acquire_rights`, `update_rights` tasks for brand licensing. Generation credentials, creative approval webhooks, revocation notifications, and usage reporting. Authenticated webhooks (HMAC-SHA256), actionable vs final rejection convention, DDEX PIE mapping for music licensing, and sandbox tooling for scenario testing.
+
+2. **Visual Guidelines on Brand Manifest** — Structured `visual_guidelines` field on `brand.json`: photography, graphic style, shapes, iconography, composition, motion, logo placement, colorways, type scale, asset libraries, and restrictions. Enables generative creative systems to produce on-brand assets.
+
+3. **Collections and Installments** — Content dimension for products representing persistent programs (podcasts, TV series, YouTube channels). `collections` on products references collections declared in an `adagents.json` by domain and collection ID — collection creators can serve as canonical sources regardless of distribution. `collection_targeting_allowed` controls whether buyers can select a subset or get the bundle. Distribution identifiers for cross-seller matching, installment lifecycle states, break-based ad inventory, talent linking, collection relationships, international content ratings.
+
+4. **Sponsored Intelligence Channel** — `sponsored_intelligence` added to the media channel taxonomy for AI platform advertising (AI assistants, AI search, generative AI experiences).
+
+5. **Property Governance Integration** — Optional `property_list` parameter on `get_products` for filtering products by governance-evaluated property lists. `property_list_applied` response field confirms filtering.
+
+6. **Campaign Governance and Policy Registry** — `sync_plans`, `check_governance`, `report_plan_outcome`, and `get_plan_audit_logs` for plan-level governance. Adds audit/advisory/enforce modes, delegated budget authority, seller-side governance checks, portfolio governance, registry-backed shared policies, and `governance_context` for canonical plan extraction.
+
+7. **Account Model Simplification** — Removed `account_resolution` capability. `require_operator_auth` now determines both auth model and account reference style.
+
+8. **Creative Workflow Upgrades** — `build_creative` now supports inline preview via `include_preview`, multi-format output via `target_format_ids`, quality tiers for draft vs production output, catalog-driven `item_limit`, and library retrieval using `creative_id` plus optional macro substitution and trafficking context. `preview_creative` also adds quality control parameters.
+
+9. **Creative Library Protocol Unification** — `list_creatives` and `sync_creatives` now live in the Creative Protocol. Creative agents can advertise `supports_generation`, `supports_transformation`, and `has_creative_library` so buyers can route generation, transformation, and library retrieval intentionally.
+
+10. **Disclosure Persistence** — Regulatory disclosure requirements can now specify persistence (`continuous`, `initial`, `flexible`) in addition to position and duration, with matching capability declarations on formats.
+
+11. **Product Discovery and Planning Ergonomics** — Product discovery adds `exclusivity` and `preferred_delivery_types`; products may omit `delivery_measurement`; packages and proposals support per-package `start_time` / `end_time`; and `get_products` now supports `time_budget` with `incomplete` response reporting.
+
+12. **Accounts and Sandbox Refinements** — `sync_accounts` adds `payment_terms`, sandbox capability moves to the account capability block, and sandbox now participates in the account natural key for implicit account flows.
+
+13. **Governance Agent Sync** — `sync_governance` task for syncing governance agent endpoints to specific accounts. Supports both explicit accounts (`account_id`) and implicit accounts (`brand` + `operator`) via account references. Replace semantics per call. Governance sync is now a dedicated tool — removed from `sync_accounts` and `list_accounts`.
+
+### Breaking Changes
+
+| Change | rc.1 | rc.2 |
+|--------|------|------|
+| Account resolution | `account_resolution` capability | Removed — `require_operator_auth` determines account model |
+| Creative library operations | `list_creatives` and `sync_creatives` documented under Media Buy | Creative library tasks now live in the Creative Protocol |
+| Sandbox capability | `media_buy.features.sandbox` | `account.sandbox` |
+| DOOH flat rate parameters | `flat_rate.parameters` without discriminator | `flat_rate.parameters.type: "dooh"` required when parameters are present |
+| delete_content_standards | Documented task | Removed — archive standards via `update_content_standards` instead |
+| get_property_features | Standalone task | Removed — use property list filters and `get_adcp_capabilities` for feature discovery |
+| Governance agent sync | `governance_agents` on `sync_accounts` request and `list_accounts` request | Moved to dedicated `sync_governance` task |
+
+### Migration Notes For rc.1 Adopters
+
+- **Creative task routing** — If you adopted 3.0.0-rc.1, update any assumptions that creative library operations are Media Buy tasks. `list_creatives` and `sync_creatives` are Creative Protocol operations in rc.2, even when a sales agent implements them on the same endpoint.
+- **Capability discovery** — Replace reads of `account_resolution` with `require_operator_auth`, and read sandbox support from `account.sandbox` instead of `media_buy.features.sandbox`.
+- **Creative request/response handling** — `build_creative` can now return inline previews, multiple manifests, or a library-resolved manifest. Clients that assumed only single-format manifest-in / manifest-out behavior should update their response handling.
+- **DOOH validation** — Existing v3 DOOH `flat_rate` integrations must add `type: "dooh"` inside `parameters` when those parameters are provided.
+
+### Other Updates
+
+- **Certification program** — Three-tier certification (Basics, Practitioner, Specialist) taught by Addie through interactive chat, with vibe coding build projects for non-technical participants.
+- **Documentation** — Illustrated protocol walkthroughs, buy-side guides, FAQ expansion, schema-compliant examples, and collapsed sidebar navigation.
 
 ---
 
@@ -73,7 +131,7 @@ High-level summaries of major AdCP releases with migration guidance. For detaile
 
 29. **Media Buy Rejection** — `rejected` status added to media-buy-status enum with `rejection_reason` on the MediaBuy object.
 
-30. **Idempotency** — `idempotency_key` on `update_media_buy` and `sync_creatives` for at-most-once execution. `buyer_ref` documented as the idempotency key for `create_media_buy`.
+30. **Idempotency** — `idempotency_key` on `update_media_buy` and `sync_creatives` for at-most-once execution. `idempotency_key` added to `create_media_buy` for at-most-once creation.
 
 ### Breaking Changes
 
@@ -131,7 +189,7 @@ High-level summaries of major AdCP releases with migration guidance. For detaile
 
 3. **Account Management** - `sync_accounts` task lets agents declare brand portfolios to sellers with upsert semantics. Account capabilities in `get_adcp_capabilities` describe billing requirements and operator authorization. Two billing models (operator, agent) with account lifecycle (active, pending_approval, payment_required, suspended, closed). `account_id` is optional on `create_media_buy` — single-account agents can omit it.
 
-4. **Commerce Media** - Catalog-driven product discovery (`catalog` on `get_products`), catalog-driven packages, per-catalog-item delivery reporting (`by_catalog_item`), store catchment targeting, and `catalog_types` on products. Cross-retailer GTIN matching via catalog selectors. Commerce attribution metrics (`roas`, `new_to_brand_rate`) in delivery response. See the [Commerce Media Guide](/docs/guides/commerce-media) and [Catalogs](/docs/creative/catalogs).
+4. **Commerce Media** - Catalog-driven product discovery (`catalog` on `get_products`), catalog-driven packages, per-catalog-item delivery reporting (`by_catalog_item`), store catchment targeting, and `catalog_types` on products. Cross-retailer GTIN matching via catalog selectors. Commerce attribution metrics (`roas`, `new_to_brand_rate`) in delivery response. See the [Commerce Media Guide](/docs/media-buy/commerce-media) and [Catalogs](/docs/creative/catalogs).
 
 5. **Creative Delivery Reporting** - Per-creative metrics breakdown within `by_package` in delivery responses. New `get_creative_delivery` task on creative agents for variant-level delivery data with manifests. Three variant tiers: standard (1:1), asset group optimization, and generative creative. Format-level `reported_metrics` declare which metrics each format can provide.
 
@@ -149,7 +207,7 @@ High-level summaries of major AdCP releases with migration guidance. For detaile
 
 12. **Typed Asset Requirements** - Discriminated union schemas for all 12 asset types (image, video, audio, text, markdown, HTML, CSS, JavaScript, VAST, DAAST, URL, webhook) using `asset_type` as discriminator.
 
-13. **Universal Macros** - `universal-macro.json` enum defining all 54 standard ad-serving macros, including 6 new additions: `GPP_SID`, `IP_ADDRESS`, `STATION_ID`, `SHOW_NAME`, `EPISODE_ID`, `AUDIO_DURATION`.
+13. **Universal Macros** - `universal-macro.json` enum defining all 54 standard ad-serving macros, including 6 new additions: `GPP_SID`, `IP_ADDRESS`, `STATION_ID`, `COLLECTION_NAME`, `INSTALLMENT_ID`, `AUDIO_DURATION`.
 
 14. **Brand Manifest Improvements** - Structured tone object with `voice`, `attributes`, `dos`, `donts` fields. Logo objects gain `orientation`, `background`, `variant`, `usage` fields.
 
@@ -168,7 +226,7 @@ High-level summaries of major AdCP releases with migration guidance. For detaile
 - `account_id` added to `get_media_buy_delivery` and `get_media_buy_artifacts` requests
 - `date_range_support` in reporting capabilities
 - `minItems: 1` on request-side arrays for stricter validation
-- `FormatCategory` enum deprecated; `type` field on Format objects now optional
+- `FormatCategory` enum and `type` field removed from Format objects (use `assets` array instead)
 - `format_id` optional in `preview_creative` (falls back to `creative_manifest.format_id`)
 - `selection_mode` on repeatable asset groups to distinguish sequential (carousel) from optimize (asset pool) behavior
 - Session ID fallback recommendation for MCP agent `context_id`
@@ -231,7 +289,7 @@ Version 3.0.0 is a **major release** that expands AdCP beyond media buying into 
 
 2. **Governance Protocol** - New protocol domain for property lists, content standards, and brand suitability evaluation with collaborative calibration workflows.
 
-3. **Sponsored Intelligence Protocol** - Conversational brand experiences in AI assistants. Defines how hosts invoke brand agent endpoints for rich engagement without breaking conversational flow. See [Sponsored Intelligence](/docs/sponsored-intelligence/overview).
+3. **Sponsored Intelligence Protocol** - Conversational brand experiences in AI assistants. Defines how hosts invoke brand agent endpoints for rich engagement without breaking conversational flow. See [Sponsored Intelligence](/docs/sponsored-intelligence/si-chat-protocol).
 
 4. **Protocol-Level Capability Discovery** - `get_adcp_capabilities` task replaces agent card extensions, providing runtime discovery of capabilities, supported protocols, and geo targeting systems.
 
@@ -269,7 +327,7 @@ Conversational brand experiences:
 - **Capability Negotiation** - Brands declare modalities (voice, video, avatar), hosts respond with supported capabilities
 - **Commerce Handoff** - Seamless transition to AdCP for transactions
 
-See [Sponsored Intelligence Overview](/docs/sponsored-intelligence/overview) for complete documentation.
+See [SI Chat Protocol](/docs/sponsored-intelligence/si-chat-protocol) for complete documentation.
 
 ### New Features
 

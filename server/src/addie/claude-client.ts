@@ -15,6 +15,7 @@ import { getCurrentConfigVersionId, type RuleSnapshot } from './config-version.j
 import { isMultimodalContent, extractMultimodalContent, isAllowedImageType, type FileReadResult } from './mcp/url-tools.js';
 import { withRetry, isRetryableError, RetriesExhaustedError, type RetryConfig } from '../utils/anthropic-retry.js';
 import { formatTokenCount, getConversationTokenLimit, type MessageTurn } from '../utils/token-limiter.js';
+import { notifyToolError } from './error-notifier.js';
 
 type ToolHandler = (input: Record<string, unknown>) => Promise<string>;
 
@@ -190,6 +191,9 @@ function detectHallucinatedAction(text: string, toolExecutions: ToolExecution[])
 /** Default max tool iterations for regular users */
 export const DEFAULT_MAX_ITERATIONS = 10;
 
+/** Elevated max tool iterations for certification sessions (teaching + assessment + exercises + completion + credentials) */
+export const CERTIFICATION_MAX_ITERATIONS = 20;
+
 /** Elevated max tool iterations for admin users doing bulk operations */
 export const ADMIN_MAX_ITERATIONS = 25;
 
@@ -221,6 +225,10 @@ export interface ProcessMessageOptions {
   requestContext?: string;
   /** Override max messages for conversation history (default: 20, certification sessions use 50) */
   maxMessages?: number;
+  /** Slack user ID — used for error notifications so admins know who was affected */
+  slackUserId?: string;
+  /** Thread ID — used for error notification links to admin view */
+  threadId?: string;
 }
 
 /**
@@ -281,6 +289,19 @@ export type StreamEvent =
   | { type: 'retry'; attempt: number; maxRetries: number; delayMs: number; reason: string }
   | { type: 'done'; response: AddieResponse }
   | { type: 'error'; error: string };
+
+interface PayloadDebugStats {
+  model: string;
+  iteration: number;
+  system_block_count: number;
+  system_chars: number;
+  request_context_chars: number;
+  tool_count: number;
+  tool_chars: number;
+  message_count: number;
+  message_chars: number;
+  largest_message?: { index: number; role: string; chars: number };
+}
 
 export class AddieClaudeClient {
   private client: Anthropic;
@@ -369,6 +390,102 @@ export class AddieClaudeClient {
     // Fallback: minimal prompt + tool reference (database unavailable or empty)
     const fallbackPrompt = `${ADDIE_FALLBACK_PROMPT}\n\n---\n\n${ADDIE_TOOL_REFERENCE}`;
     return { prompt: fallbackPrompt, ruleIds: [], rulesSnapshot: [] };
+  }
+
+  private estimateMessageContentChars(content: Anthropic.MessageParam['content']): number {
+    if (typeof content === 'string') return content.length;
+    if (!Array.isArray(content)) return 0;
+
+    let total = 0;
+    for (const block of content) {
+      if ('text' in block && typeof block.text === 'string') {
+        total += block.text.length;
+      }
+      if ('name' in block && typeof block.name === 'string') {
+        total += block.name.length;
+      }
+      if ('input' in block && block.input !== undefined) {
+        total += JSON.stringify(block.input).length;
+      }
+      if ('content' in block && typeof block.content === 'string') {
+        total += block.content.length;
+      } else if ('content' in block && Array.isArray(block.content)) {
+        total += JSON.stringify(block.content).length;
+      }
+      // Base64 image data
+      if ('source' in block) {
+        const source = (block as unknown as { source: { data?: string } }).source;
+        if (typeof source?.data === 'string') {
+          total += source.data.length;
+        }
+      }
+    }
+    return total;
+  }
+
+  private buildPayloadDebugStats(
+    effectiveModel: string,
+    systemBlocks: Anthropic.TextBlockParam[],
+    customTools: Anthropic.Tool[],
+    messages: Anthropic.MessageParam[],
+    iteration: number = 0,
+    extraToolCount: number = 0,
+  ): PayloadDebugStats {
+    const systemChars = systemBlocks.reduce((sum, block) => sum + block.text.length, 0);
+    const requestContextChars = systemBlocks.slice(1).reduce((sum, block) => sum + block.text.length, 0);
+
+    let largestMessage: PayloadDebugStats['largest_message'];
+    let messageChars = 0;
+    for (let i = 0; i < messages.length; i++) {
+      const chars = this.estimateMessageContentChars(messages[i].content);
+      messageChars += chars;
+      if (!largestMessage || chars > largestMessage.chars) {
+        largestMessage = { index: i, role: messages[i].role, chars };
+      }
+    }
+
+    return {
+      model: effectiveModel,
+      iteration,
+      system_block_count: systemBlocks.length,
+      system_chars: systemChars,
+      request_context_chars: requestContextChars,
+      tool_count: customTools.length + extraToolCount,
+      tool_chars: JSON.stringify(customTools).length,
+      message_count: messages.length,
+      message_chars: messageChars,
+      largest_message: largestMessage,
+    };
+  }
+
+  private isPromptOverflow(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('prompt is too long')) return true;
+    // RetriesExhaustedError wraps the original — check .cause
+    if (error instanceof RetriesExhaustedError) {
+      const causeMsg = error.cause instanceof Error ? error.cause.message : String(error.cause);
+      if (causeMsg.includes('prompt is too long')) return true;
+    }
+    return false;
+  }
+
+  private logPromptOverflow(error: unknown, payload: PayloadDebugStats, source: string): void {
+    if (!this.isPromptOverflow(error)) return;
+
+    const message = error instanceof Error ? error.message : String(error);
+    // Parse actual token count from Anthropic error (e.g., "... 2457832 tokens ...")
+    const tokenMatch = message.match(/(\d[\d,]+)\s*tokens/);
+    const reportedTokens = tokenMatch ? parseInt(tokenMatch[1].replace(/,/g, ''), 10) : undefined;
+
+    logger.error(
+      {
+        source,
+        error: message,
+        reported_tokens: reportedTokens,
+        payload,
+      },
+      'Addie: Prompt overflow diagnostics'
+    );
   }
 
   /**
@@ -474,11 +591,13 @@ export class AddieClaudeClient {
     // Build proper message turns from thread context
     // This sends conversation history as actual user/assistant turns, not flattened text
     // Token-aware: automatically trims older messages if conversation exceeds limits
-    // Pass tool count for more accurate token budget calculation
+    // Certification sessions compact old tool results to reclaim context
+    const isCertSession = (options?.maxMessages ?? 0) > 20;
     const messageTurnsResult = buildMessageTurnsWithMetadata(userMessage, threadContext, {
       model: effectiveModel,
       toolCount,
       maxMessages: options?.maxMessages,
+      compactToolResults: isCertSession,
     });
 
     if (messageTurnsResult.wasTrimmed) {
@@ -508,7 +627,6 @@ export class AddieClaudeClient {
         cache_control: { type: 'ephemeral' },
       };
     }
-
     let iteration = 0;
 
     while (iteration < maxIterations) {
@@ -516,25 +634,32 @@ export class AddieClaudeClient {
 
       // Use beta API to access web search
       const llmStart = Date.now();
-      const response = await withRetry(
-        () => this.client.beta.messages.create({
-          model: effectiveModel,
-          max_tokens: 4096,
-          system: systemBlocks,
-          tools: [
-            ...customTools,
-            // Add web search tool via beta API
-            ...(this.webSearchEnabled ? [{
-              type: 'web_search_20250305' as const,
-              name: 'web_search' as const,
-            }] : []),
-          ],
-          messages,
-          betas: ['web-search-2025-03-05'],
-        }),
-        { maxRetries: 3, initialDelayMs: 1000 },
-        'processMessage'
-      );
+      let response;
+      try {
+        response = await withRetry(
+          () => this.client.beta.messages.create({
+            model: effectiveModel,
+            max_tokens: 4096,
+            system: systemBlocks,
+            tools: [
+              ...customTools,
+              // Add web search tool via beta API
+              ...(this.webSearchEnabled ? [{
+                type: 'web_search_20250305' as const,
+                name: 'web_search' as const,
+              }] : []),
+            ],
+            messages,
+            betas: ['web-search-2025-03-05'],
+          }),
+          { maxRetries: 3, initialDelayMs: 1000 },
+          'processMessage'
+        );
+      } catch (error) {
+        const stats = this.buildPayloadDebugStats(effectiveModel, systemBlocks, customTools, messages, iteration, this.webSearchEnabled ? 1 : 0);
+        this.logPromptOverflow(error, stats, 'processMessage');
+        throw error;
+      }
 
       const llmDuration = Date.now() - llmStart;
       totalLlmMs += llmDuration;
@@ -841,6 +966,7 @@ export class AddieClaudeClient {
                 result.includes('need to be logged in');
               if (looksLikeError) {
                 logger.warn({ toolName, toolInput, result: result.substring(0, 500), durationMs }, 'Addie: Tool returned error result');
+                notifyToolError({ toolName, errorMessage: result.substring(0, 500), slackUserId: options?.slackUserId, threadId: options?.threadId, threw: false });
               }
               toolResults.push({ tool_use_id: toolUseId, content: result });
               toolExecutions.push({
@@ -857,6 +983,7 @@ export class AddieClaudeClient {
             const durationMs = Date.now() - startTime;
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             logger.error({ toolName, toolInput, error: errorMessage, durationMs }, 'Addie: Tool threw exception');
+            notifyToolError({ toolName, errorMessage, slackUserId: options?.slackUserId, threadId: options?.threadId, threw: true });
             toolResults.push({
               tool_use_id: toolUseId,
               content: `Error: ${errorMessage}`,
@@ -978,11 +1105,13 @@ export class AddieClaudeClient {
     // Build proper message turns from thread context
     // This sends conversation history as actual user/assistant turns, not flattened text
     // Token-aware: automatically trims older messages if conversation exceeds limits
-    // Pass tool count for more accurate token budget calculation
+    // Certification sessions compact old tool results to reclaim context
+    const isCertSession = (options?.maxMessages ?? 0) > 20;
     const messageTurnsResult = buildMessageTurnsWithMetadata(userMessage, threadContext, {
       model: effectiveModel,
       toolCount,
       maxMessages: options?.maxMessages,
+      compactToolResults: isCertSession,
     });
 
     if (messageTurnsResult.wasTrimmed) {
@@ -1012,7 +1141,6 @@ export class AddieClaudeClient {
         cache_control: { type: 'ephemeral' },
       };
     }
-
     const maxIterations = options?.maxIterations ?? 10;
     let iteration = 0;
 
@@ -1067,6 +1195,8 @@ export class AddieClaudeClient {
             streamSucceeded = true;
           } catch (streamError) {
             streamRetryCount++;
+            const stats = this.buildPayloadDebugStats(effectiveModel, systemBlocks, customTools, messages, iteration);
+            this.logPromptOverflow(streamError, stats, 'processMessageStream');
 
             // Only retry if we haven't started streaming content to the user
             // Once content is yielded, retry could cause duplicate/inconsistent output
@@ -1304,23 +1434,33 @@ export class AddieClaudeClient {
                   yield { type: 'tool_end', tool_name: toolName, result: 'Error: Failed to process file content', is_error: true };
                 }
               } else {
-                // Regular text result
+                // Regular text result — detect error strings
+                const looksLikeError = result.startsWith('Error:') ||
+                  result.startsWith('Failed to') ||
+                  result.includes('not found') ||
+                  result.includes('need to be logged in');
+                if (looksLikeError) {
+                  logger.warn({ toolName, toolInput, result: result.substring(0, 500), durationMs }, 'Addie Stream: Tool returned error result');
+                  notifyToolError({ toolName, errorMessage: result.substring(0, 500), slackUserId: options?.slackUserId, threadId: options?.threadId, threw: false });
+                }
                 toolResults.push({ tool_use_id: toolUseId, content: result });
                 toolExecutions.push({
                   tool_name: toolName,
                   parameters: toolInput,
                   result,
                   result_summary: this.summarizeToolResult(toolName, result),
-                  is_error: false,
+                  is_error: looksLikeError,
                   duration_ms: durationMs,
                   sequence: executionSequence,
                 });
-                yield { type: 'tool_end', tool_name: toolName, result, is_error: false };
+                yield { type: 'tool_end', tool_name: toolName, result, is_error: looksLikeError };
               }
             } catch (error) {
               const durationMs = Date.now() - startTime;
               const errorMessage = error instanceof Error ? error.message : 'Unknown error';
               const errorResult = `Error: ${errorMessage}`;
+              logger.error({ toolName, toolInput, error: errorMessage, durationMs }, 'Addie Stream: Tool threw exception');
+              notifyToolError({ toolName, errorMessage, slackUserId: options?.slackUserId, threadId: options?.threadId, threw: true });
               toolResults.push({
                 tool_use_id: toolUseId,
                 content: errorResult,
